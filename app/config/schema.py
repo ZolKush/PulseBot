@@ -133,8 +133,6 @@ class AppSettings(SettingsFields):
         "DATA_DIR",
         "INSTANCE_LOCK_PATH",
         "PTB_PERSISTENCE_PATH",
-        "SSH_IDENTITY_FILE",
-        "SSH_KNOWN_HOSTS_FILE",
         mode="before",
     )
     @classmethod
@@ -199,16 +197,6 @@ class AppSettings(SettingsFields):
         normalized = int(value)
         if not 1024 <= normalized <= 3_000_000:
             raise ValueError("FAIL2BAN_DIGEST_MAX_BYTES must be in range 1024..3000000")
-        return normalized
-
-    @field_validator("SSH_STRICT_HOST_KEY_CHECKING", mode="before")
-    @classmethod
-    def _validate_ssh_host_key_mode(cls, value: Any) -> str:
-        if not isinstance(value, str):
-            raise ValueError("SSH_STRICT_HOST_KEY_CHECKING must be a string")
-        normalized = value.strip().lower() or "yes"
-        if normalized not in {"yes", "no", "ask", "accept-new"}:
-            raise ValueError("SSH_STRICT_HOST_KEY_CHECKING must be yes, no, ask, or accept-new")
         return normalized
 
     @model_validator(mode="after")

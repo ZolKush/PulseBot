@@ -24,14 +24,13 @@ class ServerTarget:
     key: str
     label: str
     flag: str
-    mode: Literal["local", "ssh", "panel"]
+    mode: Literal["local", "panel"]
     expected_a_ip: str
     check_a_domains: list[str]
     monitor_containers: list[str]
     fail2ban_log_path: str
     fail2ban_enabled: bool = True
     fail2ban_timezone: str = ""
-    ssh_target: str = ""
     remnawave_uuid: str = ""
     monitoring_source: Literal["system", "remnawave"] = "system"
     tls_endpoints: tuple[TLSEndpoint, ...] = ()
@@ -66,7 +65,6 @@ def build_servers(
             fail2ban_log_path=item.fail2ban.log_path,
             fail2ban_enabled=item.fail2ban.enabled,
             fail2ban_timezone=item.fail2ban.timezone or timezone_name,
-            ssh_target=item.connection.target,
             remnawave_uuid=item.monitoring.node_uuid,
             monitoring_source=item.monitoring.source,
             tls_endpoints=tls_endpoints,
@@ -89,7 +87,9 @@ def server_monitoring_fingerprint(server: ServerTarget) -> str:
         "fail2ban_log_path": server.fail2ban_log_path,
         "fail2ban_enabled": server.fail2ban_enabled,
         "fail2ban_timezone": server.fail2ban_timezone,
-        "ssh_target": server.ssh_target,
+        # Preserve existing local/panel cache and maintenance identities after
+        # removing SSH configuration; this is only a historical hash slot.
+        "ssh_target": "",
         "remnawave_uuid": server.remnawave_uuid,
         "monitoring_source": server.monitoring_source,
         "tls_endpoints": [

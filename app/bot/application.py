@@ -134,7 +134,6 @@ def build_application(*, bot_mode: str = BOT_MODE) -> Application:
     application.add_handler(MessageHandler(RANEPA_TEXT, ranepa_easter_egg))
     conversations = register_routes(
         application,
-        bot_mode=bot_mode,
         server_key_pattern=SERVER_KEY_PATTERN,
     )
     register_jobs(

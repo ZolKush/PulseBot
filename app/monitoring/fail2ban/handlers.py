@@ -16,7 +16,6 @@ from ...config import (
     TZ,
 )
 from ...messaging.message_cleanup import record_navigation_result
-from ..remote.fail2ban import remote_fail2ban_events, remote_tail_text_file
 from ..status.presenter import build_status_message
 from .local import tail_text_file_with_sudo_async
 from .parser import parse_fail2ban_events
@@ -104,17 +103,9 @@ async def f2b_tail_cb(
         return
 
     try:
-        tail = (
-            await remote_tail_text_file(
-                server.ssh_target,
-                server.fail2ban_log_path,
-                n_lines=line_count,
-            )
-            if server.mode == "ssh"
-            else await tail_text_file_with_sudo_async(
-                server.fail2ban_log_path,
-                n_lines=line_count,
-            )
+        tail = await tail_text_file_with_sudo_async(
+            server.fail2ban_log_path,
+            n_lines=line_count,
         )
         if not tail.strip():
             payload = f"🛡 <b>Fail2ban — {html_escape(server.label)} · tail</b>\n\nЛог пуст или отсутствуют строки."
@@ -158,24 +149,15 @@ async def f2b_digest_cb(
     until = datetime.now(tz=TZ)
     since = until - timedelta(days=1)
     try:
-        if server.mode == "ssh":
-            events = await remote_fail2ban_events(
-                server.ssh_target,
-                server.fail2ban_log_path,
-                n_lines=FAIL2BAN_DIGEST_TAIL_LINES,
-                timezone=server_timezone(server_key),
-                max_bytes=FAIL2BAN_DIGEST_MAX_BYTES,
-            )
-        else:
-            raw_tail = await tail_text_file_with_sudo_async(
-                server.fail2ban_log_path,
-                n_lines=FAIL2BAN_DIGEST_TAIL_LINES,
-                max_bytes=FAIL2BAN_DIGEST_MAX_BYTES,
-            )
-            events = parse_fail2ban_events(
-                raw_tail.splitlines(),
-                timezone=server_timezone(server_key),
-            )
+        raw_tail = await tail_text_file_with_sudo_async(
+            server.fail2ban_log_path,
+            n_lines=FAIL2BAN_DIGEST_TAIL_LINES,
+            max_bytes=FAIL2BAN_DIGEST_MAX_BYTES,
+        )
+        events = parse_fail2ban_events(
+            raw_tail.splitlines(),
+            timezone=server_timezone(server_key),
+        )
         events = [event for event in events if since <= event.ts <= until]
         payload = f"🌍 <b>Сервер:</b> {html_escape(server.label)}\n" + build_fail2ban_digest_text(
             events, since=since, until=until

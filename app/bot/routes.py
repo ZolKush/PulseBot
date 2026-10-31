@@ -198,7 +198,6 @@ def _register_menu_routes(application: Application) -> None:
 def register_routes(
     application: Application,
     *,
-    bot_mode: str,
     server_key_pattern: str,
 ) -> list[NavigableConversationHandler]:
     """Register group-zero feature routes and return persistent conversations."""
@@ -217,7 +216,6 @@ def register_routes(
     _register_menu_routes(application)
     register_monitoring_routes(
         application,
-        bot_mode=bot_mode,
         server_key_pattern=server_key_pattern,
     )
     return conversations

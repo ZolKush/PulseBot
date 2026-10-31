@@ -37,7 +37,7 @@ _BOT_CONFIG.update(
             "key": "local",
             "label": "Local server",
             "flag": "",
-            "connection": {"transport": "local", "target": ""},
+            "connection": {"transport": "local"},
             "monitoring": {"source": "system", "node_uuid": ""},
         }
     ),

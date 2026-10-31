@@ -25,7 +25,7 @@ TZ = ZoneInfo(TZ_NAME)
 
 DATA_DIR = resolve_path(SETTINGS.DATA_DIR, ROOT_DIR)
 SERVERS: dict[str, ServerTarget] = load_servers(SERVER_CONFIG_DIR, timezone_name=TZ_NAME)
-BOT_MODE = "mixed" if any(server.monitoring_source == "remnawave" for server in SERVERS.values()) else "ssh"
+BOT_MODE = "mixed" if any(server.monitoring_source == "remnawave" for server in SERVERS.values()) else "local"
 
 DNS_RESOLVERS = list(SETTINGS.DNS_RESOLVERS)
 DNS_DAILY_REFRESH_AT = SETTINGS.DNS_DAILY_REFRESH_AT.strip()
@@ -34,7 +34,6 @@ DNS_STARTUP_REFRESH_DELAY_SEC = SETTINGS.DNS_STARTUP_REFRESH_DELAY_SEC
 DOCKER_BIN = resolve_bin("/usr/bin/docker", "docker")
 UFW_BIN = resolve_bin("/usr/sbin/ufw", "ufw")
 SUDO_BIN = shutil.which("sudo") or ""
-SSH_BIN = resolve_bin("/usr/bin/ssh", "ssh")
 
 FAIL2BAN_DAILY_AT = SETTINGS.FAIL2BAN_DAILY_AT.strip()
 FAIL2BAN_DIGEST_TAIL_LINES = int(SETTINGS.FAIL2BAN_DIGEST_TAIL_LINES)
@@ -82,11 +81,6 @@ DAILY_NODE_STATUS_REFRESH_AT = SETTINGS.DAILY_NODE_STATUS_REFRESH_AT
 if BOT_MODE == "mixed" and not REMNAWAVE_METRICS_URL:
     raise RuntimeError("a server JSON uses monitoring.source='remnawave', but REMNAWAVE_METRICS_URL is empty")
 
-SSH_STRICT_HOST_KEY_CHECKING = (SETTINGS.SSH_STRICT_HOST_KEY_CHECKING or "").strip() or "yes"
-SSH_KNOWN_HOSTS_FILE = (
-    resolve_path(SETTINGS.SSH_KNOWN_HOSTS_FILE, ROOT_DIR) if SETTINGS.SSH_KNOWN_HOSTS_FILE.strip() else ""
-)
-SSH_IDENTITY_FILE = resolve_path(SETTINGS.SSH_IDENTITY_FILE, ROOT_DIR) if SETTINGS.SSH_IDENTITY_FILE.strip() else ""
 PRIVILEGED_HELPER_BIN = (SETTINGS.PRIVILEGED_HELPER_BIN or "").strip()
 
 __all__ = [
@@ -138,10 +132,6 @@ __all__ = [
     "SERVER_KEY_PATTERN",
     "SERVERS",
     "SETTINGS",
-    "SSH_BIN",
-    "SSH_IDENTITY_FILE",
-    "SSH_KNOWN_HOSTS_FILE",
-    "SSH_STRICT_HOST_KEY_CHECKING",
     "STATUS_CACHE_TTL_SEC",
     "SUBPROC_MAX_OUTPUT_BYTES",
     "SUBPROC_MEDIUM_TIMEOUT",

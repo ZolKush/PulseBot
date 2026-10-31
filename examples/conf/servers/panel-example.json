@@ -5,8 +5,7 @@
   "flag": "",
   "display_order": 20,
   "connection": {
-    "transport": "ssh",
-    "target": "maintbot@example-host.example:2222"
+    "transport": "panel"
   },
   "monitoring": {
     "source": "remnawave",
@@ -30,10 +29,10 @@
     }
   ],
   "docker": {
-    "containers": ["example-node", "example-proxy"]
+    "containers": []
   },
   "fail2ban": {
-    "enabled": true,
+    "enabled": false,
     "log_path": "/var/log/fail2ban.log",
     "timezone": "UTC"
   }

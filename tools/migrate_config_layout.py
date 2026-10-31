@@ -28,7 +28,12 @@ _SECRET_KEYS = {
     "REMNAWAVE_METRICS_USER",
     "REMNAWAVE_METRICS_PASS",
 }
-_DISCARDED_KEYS = {"SERVER_INVENTORY_FILE"}
+_DISCARDED_KEYS = {
+    "SERVER_INVENTORY_FILE",
+    "SSH_IDENTITY_FILE",
+    "SSH_KNOWN_HOSTS_FILE",
+    "SSH_STRICT_HOST_KEY_CHECKING",
+}
 
 
 class ConfigMigrationError(ValueError):
@@ -161,8 +166,26 @@ def load_toml_servers(path: Path) -> list[dict[str, Any]]:
         document = {"version": 1, "key": key, **raw_server}
         document.setdefault("display_order", index * 10)
         connection = document.get("connection")
-        if isinstance(connection, dict) and connection.get("transport") == "local":
-            local_count += 1
+        if isinstance(connection, dict):
+            connection.pop("target", None)
+            if connection.get("transport") == "ssh":
+                monitoring = document.get("monitoring", {})
+                if (
+                    not isinstance(monitoring, dict)
+                    or monitoring.get("source") != "remnawave"
+                    or not monitoring.get("node_uuid")
+                ):
+                    raise ConfigMigrationError(
+                        f"SSH monitoring was removed; configure a RemnaWave node before migrating server: {key}"
+                    )
+                connection["transport"] = "panel"
+                document["docker"] = {"containers": []}
+                fail2ban = document.get("fail2ban", {})
+                if not isinstance(fail2ban, dict):
+                    raise ConfigMigrationError(f"server inventory contains an invalid fail2ban block: {key}")
+                document["fail2ban"] = {**fail2ban, "enabled": False}
+            if connection.get("transport") == "local":
+                local_count += 1
         result.append(document)
     if local_count > 1:
         raise ConfigMigrationError("server inventory contains more than one local server")

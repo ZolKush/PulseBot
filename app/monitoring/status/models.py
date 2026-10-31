@@ -52,7 +52,7 @@ class StatusSnapshot:
     tls_certificates: list[TLSCertificateView] = field(default_factory=list)
     admin_mode: bool = False
     # mixed-mode (RemnaWave metrics) extras
-    source_mode: str = "ssh"  # "ssh" | "mixed"
+    source_mode: str = "local"  # "local" | "mixed"
     node_online: bool | None = None  # None — статус ноды не определён через метрики
     online_users: int | None = None
     last_seen_text: str = ""

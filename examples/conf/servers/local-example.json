@@ -5,8 +5,7 @@
   "flag": "",
   "display_order": 10,
   "connection": {
-    "transport": "local",
-    "target": ""
+    "transport": "local"
   },
   "monitoring": {
     "source": "system",

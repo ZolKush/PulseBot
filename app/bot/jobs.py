@@ -52,16 +52,16 @@ JobCallback = Callable[[Any], Any]
 
 def _log_monitoring_configuration() -> None:
     local_count = sum(server.mode == "local" for server in SERVERS.values())
-    ssh_count = sum(server.mode == "ssh" for server in SERVERS.values())
+    panel_count = sum(server.mode == "panel" for server in SERVERS.values())
     metrics_count = sum(server.monitoring_source == "remnawave" for server in SERVERS.values())
     dns_count = sum(len(server.check_a_domains) for server in SERVERS.values())
     tls_count = sum(len(server.tls_endpoints) for server in SERVERS.values())
     container_count = sum(len(server.monitor_containers) for server in SERVERS.values())
     logger.info(
-        "Monitoring config loaded servers=%s local=%s ssh=%s metrics=%s dns_domains=%s tls_endpoints=%s containers=%s",
+        "Monitoring config loaded servers=%s local=%s panel=%s metrics=%s dns_domains=%s tls_endpoints=%s containers=%s",
         len(SERVERS),
         local_count,
-        ssh_count,
+        panel_count,
         metrics_count,
         dns_count,
         tls_count,

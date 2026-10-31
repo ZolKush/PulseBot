@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .json_files import JsonConfigError, load_json_object
-from .validators import SERVER_KEY_PATTERN, is_container_name, is_uuid, validate_ssh_target
+from .validators import SERVER_KEY_PATTERN, is_container_name, is_uuid
 
 MAX_SERVER_FILES = 256
 
@@ -25,17 +25,7 @@ class _StrictModel(BaseModel):
 
 
 class ConnectionInventory(_StrictModel):
-    transport: Literal["local", "ssh", "panel"]
-    target: str = ""
-
-    @model_validator(mode="after")
-    def _validate_target(self) -> ConnectionInventory:
-        self.target = validate_ssh_target(self.target)
-        if self.transport == "ssh" and not self.target:
-            raise ValueError("connection.target is required when transport='ssh'")
-        if self.transport != "ssh" and self.target:
-            raise ValueError("connection.target must be empty for local/panel transport")
-        return self
+    transport: Literal["local", "panel"]
 
 
 class MonitoringInventory(_StrictModel):

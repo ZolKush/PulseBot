@@ -9,7 +9,6 @@ from ...bot.guards import require_admin
 from ...bot.ui import breadcrumbs, html_escape, ui_error_text, wrap_as_codeblock_html
 from ...config import SERVER_KEY_PATTERN, server_monitoring_fingerprint
 from ...storage import get_docker_status_cache
-from ..remote.docker import remote_docker_inspect_summary, remote_docker_logs_tail
 from ..status.cache import docker_views_from_cache
 from ..status.common import format_iso_short, get_server_target
 from ..status.presenter import build_status_message
@@ -185,10 +184,7 @@ async def docker_inspect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not _is_server_container_allowed(server_key, name):
         await q.edit_message_text(ui_error_text("контейнер недоступен."), reply_markup=_docker_list_kb(server_key))
         return
-    if srv.mode == "ssh":
-        summary = await remote_docker_inspect_summary(srv.ssh_target, name)
-    else:
-        summary = await docker_inspect_summary(name)
+    summary = await docker_inspect_summary(name)
     payload = (
         f"<b>{html_escape(breadcrumbs('Статус', srv.label, 'Docker', name, 'Inspect'))}</b>\n\n"
         + wrap_as_codeblock_html(summary)
@@ -225,10 +221,7 @@ async def docker_logs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await q.edit_message_text(ui_error_text("контейнер недоступен."), reply_markup=_docker_list_kb(server_key))
         return
 
-    if srv.mode == "ssh":
-        log_text = await remote_docker_logs_tail(srv.ssh_target, name, tail)
-    else:
-        log_text = await docker_logs_tail(name, tail)
+    log_text = await docker_logs_tail(name, tail)
 
     is_at_max = tail >= DOCKER_LOGS_TAIL_MAX
     token = _container_token(server_key, name)

@@ -10,7 +10,6 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from ...bot.ui import SEP, html_escape, plural_ru
 from ...config import SERVER_KEY_PATTERN, TZ
-from ..remote.fail2ban import remote_fail2ban_stat
 from .local import fail2ban_stat_with_sudo_async
 from .models import Fail2banEvent
 from .source import get_server
@@ -135,24 +134,6 @@ async def build_fail2ban_menu_text(server_key: str) -> str:
     title = f"🛡 <b>Fail2ban — {html_escape(server.label)}</b>\n{SEP}\n"
     if not server.fail2ban_enabled:
         return title + "Ежедневный сбор и просмотр отключены для этого сервера в конфигурации."
-    if server.mode == "ssh":
-        stat = await remote_fail2ban_stat(server.ssh_target, path)
-        if stat is not None:
-            size_bytes, modified_at = stat
-            return (
-                title
-                + f"Файл: <code>{html_escape(str(path))}</code>\n"
-                + f"SSH host: <code>{html_escape(server.ssh_target)}</code>\n"
-                + f"Размер: <code>{size_bytes / 1024.0:.1f} KiB</code>\n"
-                + f"Изменён: <code>{html_escape(format_datetime(modified_at))}</code>\n\n"
-                + "Выберите действие:"
-            )
-        return (
-            title
-            + f"Файл: <code>{html_escape(str(path))}</code>\n"
-            + f"SSH host: <code>{html_escape(server.ssh_target)}</code>\n\n"
-            + "Выберите действие:"
-        )
     try:
         stat = await fail2ban_stat_with_sudo_async(path)
         if stat is None:

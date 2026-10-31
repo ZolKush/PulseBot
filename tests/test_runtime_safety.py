@@ -5,7 +5,6 @@ from pydantic import ValidationError
 
 from app.config.schema import AppSettings
 from app.config.secrets import load_required_secrets
-from app.monitoring.remote.transport import _split_ssh_target
 from app.monitoring.system.ufw import _parse_ufw_status
 from app.runtime.lock import InstanceAlreadyRunning, SingleInstanceLock
 
@@ -22,19 +21,6 @@ from app.runtime.lock import InstanceAlreadyRunning, SingleInstanceLock
 )
 def test_ufw_status_does_not_confuse_inactive_with_active(raw: str, expected: str) -> None:
     assert _parse_ufw_status(raw) == expected
-
-
-@pytest.mark.parametrize(
-    ("target", "expected"),
-    [
-        ("root@example.com:2222", ("root@example.com", 2222)),
-        ("2001:db8::1234", ("2001:db8::1234", None)),
-        ("root@[2001:db8::1]:2222", ("root@2001:db8::1", 2222)),
-        ("root@[2001:db8::1]", ("root@2001:db8::1", None)),
-    ],
-)
-def test_split_ssh_target_handles_ipv6(target: str, expected: tuple[str, int | None]) -> None:
-    assert _split_ssh_target(target) == expected
 
 
 def test_legacy_positional_server_settings_are_rejected() -> None:
@@ -164,8 +150,6 @@ def test_app_settings_validation_does_not_expose_dotenv_secrets() -> None:
             {
                 "REMOTE_SERVER_ENABLED": True,
                 "REMOTE_SERVER_SSH_TARGETS": ["root@example.test"],
-                "SSH_KNOWN_HOSTS_FILE": "",
-                "SSH_IDENTITY_FILE": "",
                 "ADMIN_PASSWORD": secret_marker,
             }
         )

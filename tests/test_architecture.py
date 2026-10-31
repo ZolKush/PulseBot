@@ -14,6 +14,7 @@ HARD_MODULE_LIMIT = 400
 REMOVED_MODULE_PREFIXES = (
     "app.handlers",
     "app.services",
+    "app.monitoring.remote",
 )
 REMOVED_ROOT_MODULES = {
     "app.help_content",
@@ -24,6 +25,8 @@ REMOVED_ROOT_MODULES = {
     "app.single_instance",
     "app.staff",
     "app.validation",
+    "app.monitoring.status.ssh",
+    "app.monitoring.status.diagnostics",
 }
 EXPECTED_ROOT_MODULES = {
     "__init__.py",

@@ -19,7 +19,7 @@ from .models import DockerContainerView, StatusSnapshot, TLSCertificateView
 _STATUS_CACHE: dict[tuple[str, bool], tuple[float, StatusSnapshot]] = {}
 _STATUS_LOCKS: dict[tuple[str, bool], asyncio.Lock] = {}
 _STATUS_GENERATIONS: dict[str, int] = {}
-_SSH_REFRESH_LOCKS: dict[str, asyncio.Lock] = {}
+_LOCAL_REFRESH_LOCKS: dict[str, asyncio.Lock] = {}
 
 
 def docker_failure_rows(
@@ -145,5 +145,5 @@ async def cached_snapshot(
         return snapshot
 
 
-def ssh_refresh_lock(server_key: str) -> asyncio.Lock:
-    return _SSH_REFRESH_LOCKS.setdefault(server_key, asyncio.Lock())
+def local_refresh_lock(server_key: str) -> asyncio.Lock:
+    return _LOCAL_REFRESH_LOCKS.setdefault(server_key, asyncio.Lock())

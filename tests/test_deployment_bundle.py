@@ -25,7 +25,13 @@ def _project(tmp_path: Path) -> Path:
     SplitJsonBackend(data).bootstrap()
     (data / ".hidden").write_bytes(b"preserve-hidden-file")
     bot = json.loads((ROOT / "examples/conf/docker-bot.json").read_text(encoding="utf-8"))
-    bot.update(DATA_DIR="/opt/old/data", PTB_PERSISTENCE_PATH="/opt/old/data/telegram/persistence.pickle")
+    bot.update(
+        DATA_DIR="/opt/old/data",
+        PTB_PERSISTENCE_PATH="/opt/old/data/telegram/persistence.pickle",
+        SSH_IDENTITY_FILE="/old/key",
+        SSH_KNOWN_HOSTS_FILE="/old/known_hosts",
+        SSH_STRICT_HOST_KEY_CHECKING="yes",
+    )
     _json(data / "conf/bot.json", bot)
     server = json.loads((ROOT / "examples/conf/docker-server.json").read_text(encoding="utf-8"))
     server["connection"] = {"transport": "ssh", "target": "maintbot@example.com"}
@@ -78,12 +84,13 @@ def test_bundle_copies_all_state_and_adapts_only_copied_config(tmp_path: Path) -
     ).read_bytes()
     bot = json.loads((output / "data/conf/bot.json").read_text(encoding="utf-8"))
     assert bot["DATA_DIR"] == "/var/lib/maintbot"
-    assert bot["INSTANCE_LOCK_PATH"] == bot["PTB_PERSISTENCE_PATH"] == bot["SSH_IDENTITY_FILE"] == ""
+    assert bot["INSTANCE_LOCK_PATH"] == bot["PTB_PERSISTENCE_PATH"] == ""
+    assert not any(key.startswith("SSH_") for key in bot)
     assert bot["TZ"] == "Europe/Moscow"
     server = json.loads((output / "data/conf/servers/remote.json").read_text(encoding="utf-8"))
     assert server["key"] == "panel"
     assert server["monitoring"]["node_uuid"] == "00000000-0000-0000-0000-000000000001"
-    assert server["connection"] == {"transport": "panel", "target": ""}
+    assert server["connection"] == {"transport": "panel"}
     assert server["docker"] == {"containers": []}
     assert server["fail2ban"]["enabled"] is False
     assert not (output / "data/conf/servers/local.json").exists()

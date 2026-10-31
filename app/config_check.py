@@ -23,10 +23,10 @@ def _check_private_data_permissions(path_value: str, field_name: str) -> list[st
     return implementation(path_value, field_name)
 
 
-def _readable_file(path_value: str, field_name: str, *, private: bool = False) -> list[str]:
+def _readable_file(path_value: str, field_name: str) -> list[str]:
     from .config.checks import _readable_file as implementation
 
-    return implementation(path_value, field_name, private=private)
+    return implementation(path_value, field_name)
 
 
 def _writable_parent(path_value: str, field_name: str) -> list[str]:

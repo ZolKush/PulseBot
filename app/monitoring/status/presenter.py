@@ -30,7 +30,6 @@ async def build_status_message(
     keyboard = status_actions_keyboard(
         admin_mode=snapshot.admin_mode,
         server_key=server.key,
-        show_ssh_fallback=server.mode == "ssh" and snapshot.source_mode == "mixed" and bool(snapshot.metrics_error),
     )
     return format_status_message(snapshot), keyboard
 

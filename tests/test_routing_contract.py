@@ -240,23 +240,15 @@ def test_default_job_names_and_schedules_are_stable() -> None:
     assert before.timestamp() + 9 <= tls_startup.run_date.timestamp() <= after.timestamp() + 11
 
 
-def test_mixed_mode_adds_only_ssh_routes_and_node_status_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_mixed_mode_keeps_routes_and_adds_node_status_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(main_module, "BOT_MODE", "mixed")
     before = datetime.now(timezone.utc)
     application = main_module.build_app()
     after = datetime.now(timezone.utc)
 
     routes = tuple(_route_key(handler) for handler in application.handlers[0])
-    expected_ssh_routes = (
-        r"callback:^status:sshfallback:confirm:[a-z0-9_-]{1,12}$",
-        r"callback:^status:sshfallback:[a-z0-9_-]{1,12}$",
-        r"callback:^status:sshrefresh:confirm:[a-z0-9_-]{1,12}$",
-        r"callback:^status:sshrefresh:[a-z0-9_-]{1,12}$",
-        r"callback:^status:sshdiag:confirm:[a-z0-9_-]{1,12}$",
-        r"callback:^status:sshdiag:[a-z0-9_-]{1,12}$",
-    )
-    assert tuple(route for route in routes if "status:ssh" in route) == expected_ssh_routes
-    assert len(routes) == len(DEFAULT_ROUTES) + len(expected_ssh_routes)
+    assert routes == DEFAULT_ROUTES
+    assert not any("status:ssh" in route for route in routes)
 
     assert application.job_queue is not None
     jobs = {job.name: job for job in application.job_queue.jobs()}

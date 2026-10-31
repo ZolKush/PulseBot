@@ -31,9 +31,6 @@ class SettingsFields(BaseModel):
     SUBPROC_MEDIUM_TIMEOUT: int = 8
     SUBPROC_MAX_OUTPUT_BYTES: int = 1_000_000
 
-    SSH_STRICT_HOST_KEY_CHECKING: str = "yes"
-    SSH_KNOWN_HOSTS_FILE: str = ""
-    SSH_IDENTITY_FILE: str = ""
     PRIVILEGED_HELPER_BIN: str = "/usr/local/libexec/maintbot-helper"
 
     AUTH_FAIL_WINDOW_SEC: int = 300

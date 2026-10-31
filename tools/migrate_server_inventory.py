@@ -107,7 +107,6 @@ def _server(
     label: str,
     flag: str,
     transport: str,
-    target: str,
     node_uuid: str,
     expected_ip: str,
     domains: list[str],
@@ -122,7 +121,6 @@ def _server(
         "label": label or key,
         "flag": flag.upper(),
         "transport": transport,
-        "target": target,
         "monitoring_source": "remnawave" if node_uuid else "system",
         "node_uuid": node_uuid,
         "expected_ip": expected_ip,
@@ -149,7 +147,6 @@ def migrate(env: dict[str, str], *, fallbacks: dict[str, list[int]]) -> list[dic
             label=env.get("LOCAL_SERVER_LABEL", "Local server"),
             flag=env.get("LOCAL_SERVER_FLAG", ""),
             transport="local",
-            target="",
             node_uuid=env.get("LOCAL_SERVER_REMNAWAVE_UUID", "").strip(),
             expected_ip=env.get("EXPECTED_A_IP", "").strip(),
             domains=_list(env.get("CHECK_A_DOMAINS")),
@@ -174,9 +171,6 @@ def migrate(env: dict[str, str], *, fallbacks: dict[str, list[int]]) -> list[dic
     labels = _aligned(env, "REMOTE_SERVER_LABELS", total)
     flags = _aligned(env, "REMOTE_SERVER_FLAGS", total)
     ips = _aligned(env, "REMOTE_SERVER_EXPECTED_A_IPS", total)
-    paths = _aligned(env, "REMOTE_SERVER_FAIL2BAN_LOG_PATHS", total)
-    enabled = _aligned(env, "REMOTE_SERVER_FAIL2BAN_ENABLED", total)
-    timezones = _aligned(env, "REMOTE_SERVER_FAIL2BAN_TIMEZONES", total)
     uuids = _aligned(env, "REMOTE_SERVER_REMNAWAVE_UUIDS", total, keep_empty=True)
     singular_uuid = env.get("REMOTE_SERVER_REMNAWAVE_UUID", "").strip()
     if singular_uuid:
@@ -184,13 +178,10 @@ def migrate(env: dict[str, str], *, fallbacks: dict[str, list[int]]) -> list[dic
             raise ValueError("REMOTE_SERVER_REMNAWAVE_UUID conflicts with the remote server list")
         uuids = [singular_uuid]
     domain_groups = _groups(env.get("REMOTE_SERVER_DOMAINS"))
-    container_groups = _groups(env.get("REMOTE_SERVER_MONITOR_CONTAINERS_BY_SERVER"))
-    if container_groups and len(container_groups) != total:
-        raise ValueError("REMOTE_SERVER_MONITOR_CONTAINERS_BY_SERVER group count does not match SSH targets")
-    remote_default_containers = _list(env.get("REMOTE_SERVER_MONITOR_CONTAINERS")) or default_containers
-    default_path = env.get("REMOTE_SERVER_FAIL2BAN_LOG_PATH", "/var/log/fail2ban.log")
-
-    for index, target in enumerate(targets):
+    for index in range(total):
+        node_uuid = _at(uuids, index)
+        if not node_uuid:
+            raise ValueError("SSH monitoring was removed; configure a RemnaWave UUID for every remote server")
         code_fallback = env.get("REMOTE_SERVER_CODE", "remote") if total == 1 else f"srv{index + 1}"
         domains = _domain_group(domain_groups, index, total) if domain_groups else []
         if not domains and total == 1:
@@ -200,15 +191,14 @@ def migrate(env: dict[str, str], *, fallbacks: dict[str, list[int]]) -> list[dic
                 key=_key(_at(codes, index), code_fallback),
                 label=_at(labels, index, env.get("REMOTE_SERVER_LABEL", f"Server {index + 1}")),
                 flag=_at(flags, index, env.get("REMOTE_SERVER_FLAG", "")),
-                transport="ssh",
-                target=target,
-                node_uuid=_at(uuids, index),
+                transport="panel",
+                node_uuid=node_uuid,
                 expected_ip=_at(ips, index, env.get("REMOTE_SERVER_EXPECTED_A_IP", "")),
                 domains=domains,
-                containers=container_groups[index] if container_groups else remote_default_containers,
-                fail2ban_enabled=_bool(_at(enabled, index), True),
-                fail2ban_path=_at(paths, index, default_path),
-                fail2ban_timezone=_at(timezones, index, timezone),
+                containers=[],
+                fail2ban_enabled=False,
+                fail2ban_path="/var/log/fail2ban.log",
+                fail2ban_timezone=timezone,
                 fallbacks=fallbacks,
             )
         )
@@ -236,8 +226,6 @@ def render(servers: list[dict[str, Any]]) -> str:
                 f"transport = {_quoted(server['transport'])}",
             ]
         )
-        if server["target"]:
-            lines.append(f"target = {_quoted(server['target'])}")
         lines.extend(["", f"[{prefix}.monitoring]", f"source = {_quoted(server['monitoring_source'])}"])
         if server["node_uuid"]:
             lines.append(f"node_uuid = {_quoted(server['node_uuid'])}")

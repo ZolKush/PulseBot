@@ -1,14 +1,10 @@
-"""Select local or remote Fail2Ban log access for a configured server."""
+"""Select local Fail2Ban log access for a configured server."""
 
 from __future__ import annotations
 
 from zoneinfo import ZoneInfo
 
 from ...config import SERVERS, TZ, ServerTarget, logger
-from ..remote.fail2ban import (
-    remote_fail2ban_identity,
-    remote_read_text_range,
-)
 from .local import (
     fail2ban_identity_with_sudo_async,
     read_text_range_with_sudo_async,
@@ -43,8 +39,6 @@ async def file_identity(
     server = get_server(server_key)
     if server.mode == "panel":
         return None
-    if server.mode == "ssh":
-        return await remote_fail2ban_identity(server.ssh_target, path)
     return await fail2ban_identity_with_sudo_async(path)
 
 
@@ -68,14 +62,6 @@ async def read_range(
     server = get_server(server_key)
     if server.mode == "panel":
         raise PermissionError("Fail2ban недоступен в режиме панели")
-    if server.mode == "ssh":
-        return await remote_read_text_range(
-            server.ssh_target,
-            path,
-            offset,
-            limit,
-            expected_identity=expected_identity,
-        )
     result = await read_text_range_with_sudo_async(path, offset, limit)
     if not result.identity.same_file_as(expected_identity):
         raise FileIdentityChangedError(f"fail2ban log changed before read: {path}")

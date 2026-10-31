@@ -17,24 +17,10 @@ from app.config import ServerTarget
 from app.config.servers import TLSEndpoint
 from app.monitoring.docker import local as local_docker
 from app.monitoring.remnawave.models import MetricsSnapshot, NodeMetrics
-from app.monitoring.remote import docker as remote_docker
-from app.monitoring.remote import status as remote_status
 from app.monitoring.status import cache, collectors, common, handlers, keyboards, presenter
 from app.monitoring.tls import checks as tls_checks
 from app.monitoring.tls import policy as tls_policy
 from app.monitoring.tls import service as tls_service
-
-_REMOTE_STATUS = """__MBOT_SEC_UPTIME__
-172800.00 0
-__MBOT_SEC_MEMINFO__
-MemTotal: 2097152 kB
-MemAvailable: 1048576 kB
-__MBOT_SEC_DF__
-Filesystem 1B-blocks Used Available Use% Mounted on
-/dev/test 10737418240 2147483648 8589934592 20% /
-__MBOT_SEC_UFW__
-Status: active
-"""
 
 
 def _server(**changes):
@@ -42,12 +28,11 @@ def _server(**changes):
         key="test",
         label="Test server",
         flag="",
-        mode="ssh",
+        mode="local",
         expected_a_ip="",
         check_a_domains=[],
         monitor_containers=["api"],
         fail2ban_log_path="/var/log/fail2ban.log",
-        ssh_target="maintbot@test.example",
     )
     return replace(target, **changes)
 
@@ -87,8 +72,6 @@ def monitoring(isolated_storage, monkeypatch):
         for module in (config, common, handlers, keyboards, presenter, tls_policy):
             monkeypatch.setattr(module, "SERVERS", inventory)
         dns = AsyncMock(return_value={"total": 0, "ok": 0, "bad": 0, "unknown": 0, "details": []})
-        ssh_status = AsyncMock(return_value=(0, _REMOTE_STATUS, ""))
-        ssh_docker = AsyncMock(return_value=(0, "api|Up 2 days\n__MBOT_DOCKER_OK__|1\n", ""))
         docker_process = AsyncMock(return_value=(0, "api|Up 2 days\n", ""))
         tls_fetch = AsyncMock(side_effect=_valid_tls_certificate)
         metrics = AsyncMock(
@@ -113,16 +96,13 @@ def monitoring(isolated_storage, monkeypatch):
         monkeypatch.setattr(handlers, "build_dns_status_payload_live", dns)
         monkeypatch.setattr(handlers, "get_metrics_snapshot", metrics)
         monkeypatch.setattr(collectors, "get_metrics_snapshot", metrics)
-        monkeypatch.setattr(remote_status, "ssh_run_shell", ssh_status)
-        monkeypatch.setattr(remote_docker, "ssh_run_shell", ssh_docker)
         monkeypatch.setattr(local_docker, "run_exec", docker_process)
         monkeypatch.setattr(tls_checks, "_fetch_der_with_trust", tls_fetch)
         query = SimpleNamespace(answer=AsyncMock(), edit_message_text=AsyncMock())
         return SimpleNamespace(
             update=SimpleNamespace(callback_query=query),
             dns=dns,
-            ssh_status=ssh_status,
-            ssh_docker=ssh_docker,
+            uptime=collectors.check_uptime,
             docker_process=docker_process,
             metrics=metrics,
             tls_fetch=tls_fetch,
@@ -132,12 +112,11 @@ def monitoring(isolated_storage, monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["local", "ssh"])
 @pytest.mark.parametrize("source", ["system", "remnawave"])
-async def test_refresh_recovers_cached_container_error(monitoring, mode, source):
-    target = _server(mode=mode, monitoring_source=source, remnawave_uuid="node" if source == "remnawave" else "")
+async def test_refresh_recovers_cached_container_error(monitoring, source):
+    target = _server(monitoring_source=source, remnawave_uuid="node" if source == "remnawave" else "")
     env = monitoring(target)
-    await storage.set_docker_status_cache(target.key, {"containers": [["api", False, "ssh ошибка: timeout", "-"]]})
+    await storage.set_docker_status_cache(target.key, {"containers": [["api", False, "ошибка: timeout", "-"]]})
     before, _ = await presenter.build_status_message(env.update, target.key)
     assert "Docker ⚠️ н/д" in before
 
@@ -147,31 +126,26 @@ async def test_refresh_recovers_cached_container_error(monitoring, mode, source)
     assert saved["containers"] == [["api", True, "Up 2 days", "-"]]
     text = env.update.callback_query.edit_message_text.call_args.args[0]
     assert "Docker 🟢 1/1" in text
-    assert "ssh ошибка" not in text
+    assert "ошибка: timeout" not in text
     assert "Контейнеры — проблемы" not in text
-    if mode == "ssh":
-        env.ssh_docker.assert_awaited_once()
-        env.docker_process.assert_not_awaited()
-    else:
-        env.docker_process.assert_awaited_once()
-        env.ssh_docker.assert_not_awaited()
+    env.docker_process.assert_awaited_once()
     if source == "remnawave":
         env.metrics.assert_any_await(force_refresh=True)
-        env.ssh_status.assert_not_awaited()
+        env.uptime.assert_not_awaited()
     else:
         env.metrics.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("dns_fails", [False, True])
-async def test_refresh_replaces_cached_ssh_failure_even_when_dns_fails(monitoring, dns_fails):
+async def test_refresh_replaces_cached_host_failure_even_when_dns_fails(monitoring, dns_fails):
     target = _server()
     env = monitoring(target)
-    env.ssh_status.return_value = (255, "", "Connection timed out")
-    await storage.set_docker_status_cache(target.key, {"containers": [["api", False, "ssh ошибка", "-"]]})
+    env.uptime.side_effect = OSError("host probe failed")
+    await storage.set_docker_status_cache(target.key, {"containers": [["api", False, "ошибка: timeout", "-"]]})
     before = await collectors.build_status_snapshot(env.update, target)
-    assert (before.uptime_text, before.memory_raw, before.disk_raw, before.ufw_state) == ("н/д",) * 4
-    env.ssh_status.return_value = (0, _REMOTE_STATUS, "")
+    assert before.uptime_text == "н/д"
+    env.uptime.side_effect = None
     if dns_fails:
         env.dns.side_effect = RuntimeError("resolver failed")
 
@@ -182,7 +156,7 @@ async def test_refresh_replaces_cached_ssh_failure_even_when_dns_fails(monitorin
     assert all(value != "н/д" for value in (after.uptime_text, after.memory_raw, after.disk_raw))
     assert after.ufw_state == "active"
     assert after.containers[0].is_up
-    assert env.ssh_status.await_count == 2
+    assert env.uptime.await_count == 2
     text = env.update.callback_query.edit_message_text.call_args.args[0]
     assert "Docker 🟢 1/1" in text
     if dns_fails:
@@ -190,14 +164,13 @@ async def test_refresh_replaces_cached_ssh_failure_even_when_dns_fails(monitorin
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["local", "ssh"])
-async def test_refresh_replaces_healthy_containers_on_exception_and_next_click_recovers(monitoring, mode):
-    target = _server(mode=mode)
+async def test_refresh_replaces_healthy_containers_on_exception_and_next_click_recovers(monitoring):
+    target = _server()
     env = monitoring(target)
     await storage.set_docker_status_cache(target.key, {"containers": [["api", True, "Up 1 day", "-"]]})
     before, _ = await presenter.build_status_message(env.update, target.key)
     assert "Docker 🟢 1/1" in before
-    transport = env.ssh_docker if mode == "ssh" else env.docker_process
+    transport = env.docker_process
     transport.side_effect = OSError("connection lost")
 
     await handlers._refresh_status_screen(env.update, server_key=target.key)
@@ -222,13 +195,13 @@ async def test_refresh_replaces_healthy_containers_on_exception_and_next_click_r
 @pytest.mark.asyncio
 async def test_refresh_only_changes_selected_server(monitoring):
     selected = _server()
-    other = _server(key="other", label="Other server", ssh_target="maintbot@other.example")
+    other = _server(key="other", label="Other server")
     env = monitoring(selected, other)
     for target in (selected, other):
-        await storage.set_docker_status_cache(target.key, {"containers": [["api", False, "ssh ошибка", "-"]]})
+        await storage.set_docker_status_cache(target.key, {"containers": [["api", False, "ошибка: timeout", "-"]]})
     other_snapshot = await collectors.build_status_snapshot(env.update, other)
     other_cache = storage.get_docker_status_cache(other.key)
-    env.ssh_status.reset_mock()
+    env.uptime.reset_mock()
 
     await handlers._refresh_status_screen(env.update, server_key=selected.key)
 
@@ -236,10 +209,8 @@ async def test_refresh_only_changes_selected_server(monitoring):
     assert storage.get_docker_status_cache(other.key) == other_cache
     assert await collectors.build_status_snapshot(env.update, other) is other_snapshot
     env.dns.assert_awaited_once_with(selected)
-    env.ssh_docker.assert_awaited_once()
-    env.ssh_status.assert_awaited_once()
-    assert env.ssh_docker.await_args.args[0] == selected.ssh_target
-    assert env.ssh_status.await_args.args[0] == selected.ssh_target
+    env.docker_process.assert_awaited_once()
+    env.uptime.assert_awaited_once()
 
 
 @pytest.mark.asyncio

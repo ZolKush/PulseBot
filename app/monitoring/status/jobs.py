@@ -15,7 +15,7 @@ from ...storage import (
 from .cache import invalidate_status_cache
 from .dns import build_dns_status_payload_live
 from .docker import refresh_docker_status
-from .ssh import collect_disk_ufw
+from .local import collect_disk_ufw
 
 DOCKER_STATUS_REFRESH_INTERVAL_SEC = 6 * 60 * 60
 DOCKER_STATUS_STARTUP_DELAY_SEC = 15

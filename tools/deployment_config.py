@@ -46,9 +46,9 @@ def docker_configuration(
         DATA_DIR="/var/lib/maintbot",
         INSTANCE_LOCK_PATH="",
         PTB_PERSISTENCE_PATH="",
-        SSH_IDENTITY_FILE="",
-        SSH_KNOWN_HOSTS_FILE="",
     )
+    for retired_key in ("SSH_IDENTITY_FILE", "SSH_KNOWN_HOSTS_FILE", "SSH_STRICT_HOST_KEY_CHECKING"):
+        bot.pop(retired_key, None)
     if not isinstance(bot.get("REMNAWAVE_METRICS_URL"), str) or not bot["REMNAWAVE_METRICS_URL"].strip():
         raise DeploymentPreparationError("a panel metrics URL is required")
     server_dir = config_dir / "servers"
@@ -82,7 +82,7 @@ def docker_configuration(
         ):
             raise DeploymentPreparationError("panel server configuration requires a valid existing node UUID")
         document = copy.deepcopy(document)
-        document["connection"] = {"transport": "panel", "target": ""}
+        document["connection"] = {"transport": "panel"}
         document["docker"] = {"containers": []}
         fail2ban = document.get("fail2ban", {})
         if not isinstance(fail2ban, dict):

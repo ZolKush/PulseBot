@@ -27,21 +27,12 @@ from ..monitoring.status.handlers import (
     status_tls_refresh_cb,
     status_ufw_cb,
 )
-from ..monitoring.status.ssh import (
-    status_ssh_diag_cb,
-    status_ssh_diag_confirm_cb,
-    status_ssh_fallback_cb,
-    status_ssh_fallback_confirm_cb,
-    status_ssh_refresh_cb,
-    status_ssh_refresh_confirm_cb,
-)
 from ..monitoring.tls.handlers import tls_report_cb
 
 
 def _register_status_routes(
     application: Application,
     *,
-    bot_mode: str,
     server_key_pattern: str,
 ) -> None:
     application.add_handler(CallbackQueryHandler(status_pick_cb, pattern=r"^status:pick$", block=False))
@@ -54,26 +45,6 @@ def _register_status_routes(
         (tls_report_cb, rf"^tls:list:{server_key_pattern}$"),
     ):
         application.add_handler(CallbackQueryHandler(callback, pattern=pattern, block=False))
-
-    if bot_mode == "mixed":
-        for callback, pattern in (
-            (
-                status_ssh_fallback_confirm_cb,
-                rf"^status:sshfallback:confirm:{server_key_pattern}$",
-            ),
-            (status_ssh_fallback_cb, rf"^status:sshfallback:{server_key_pattern}$"),
-            (
-                status_ssh_refresh_confirm_cb,
-                rf"^status:sshrefresh:confirm:{server_key_pattern}$",
-            ),
-            (status_ssh_refresh_cb, rf"^status:sshrefresh:{server_key_pattern}$"),
-            (
-                status_ssh_diag_confirm_cb,
-                rf"^status:sshdiag:confirm:{server_key_pattern}$",
-            ),
-            (status_ssh_diag_cb, rf"^status:sshdiag:{server_key_pattern}$"),
-        ):
-            application.add_handler(CallbackQueryHandler(callback, pattern=pattern, block=False))
 
     for callback, pattern in (
         (dns_back_cb, rf"^dns:back:{server_key_pattern}$"),
@@ -109,13 +80,11 @@ def _register_fail2ban_routes(application: Application, *, server_key_pattern: s
 def register_monitoring_routes(
     application: Application,
     *,
-    bot_mode: str,
     server_key_pattern: str,
 ) -> None:
     """Register monitoring routes in their externally visible stable order."""
     _register_status_routes(
         application,
-        bot_mode=bot_mode,
         server_key_pattern=server_key_pattern,
     )
     _register_fail2ban_routes(application, server_key_pattern=server_key_pattern)

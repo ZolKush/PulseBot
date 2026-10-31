@@ -33,8 +33,6 @@ def status_pick_text() -> str:
 def status_actions_keyboard(
     admin_mode: bool,
     server_key: str,
-    *,
-    show_ssh_fallback: bool = False,
 ) -> InlineKeyboardMarkup:
     host_checks = server_key not in SERVERS or SERVERS[server_key].mode != "panel"
     rows: list[list[InlineKeyboardButton]] = [
@@ -52,15 +50,6 @@ def status_actions_keyboard(
         )
     if admin_mode and not host_checks:
         rows.append([InlineKeyboardButton("🔐 TLS", callback_data=f"tls:list:{server_key}")])
-    if admin_mode and host_checks and show_ssh_fallback:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    "🔧 Проверить disk/UFW по SSH",
-                    callback_data=f"status:sshfallback:{server_key}",
-                )
-            ]
-        )
     if admin_mode and host_checks:
         rows.append(
             [
@@ -81,23 +70,6 @@ def status_actions_keyboard(
         )
     rows.append([InlineKeyboardButton("🏠 Меню", callback_data="menu:home")])
     return InlineKeyboardMarkup(rows)
-
-
-def confirmation_keyboard(server_key: str, action: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    "✅ Да",
-                    callback_data=f"status:{action}:confirm:{server_key}",
-                ),
-                InlineKeyboardButton(
-                    "❌ Отмена",
-                    callback_data=f"status:show:{server_key}",
-                ),
-            ]
-        ]
-    )
 
 
 def ufw_actions_keyboard(server_key: str) -> InlineKeyboardMarkup:

@@ -1,4 +1,4 @@
-"""Compose local, remote and RemnaWave inputs into status snapshots."""
+"""Compose local and RemnaWave inputs into status snapshots."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from ..remnawave import (
     format_uptime_seconds,
     get_metrics_snapshot,
 )
-from ..remote.status import remote_status_bundle
 from ..system.metrics import check_uptime, disk_root, meminfo
 from ..system.ufw import ufw_status_basic, ufw_summary_for_admin
 from .cache import (
@@ -76,36 +75,6 @@ async def build_status_payload_local(
         ufw_state = str(ufw_data)
         allow, deny, reject = [], [], []
     return uptime, memory, disk, [], ufw_state, allow, deny, reject
-
-
-async def build_status_payload_remote(
-    admin_mode: bool,
-    server: ServerTarget,
-) -> StatusPayload:
-    try:
-        result = await remote_status_bundle(
-            server.ssh_target,
-            server.monitor_containers,
-            admin_mode=admin_mode,
-            include_docker=False,
-        )
-        if result.ok:
-            return result.values()
-        error = result.error or "SSH недоступен"
-    except Exception as exc:
-        name = exc.__class__.__name__
-        detail = str(exc).strip()
-        error = f"{name}: {detail}" if detail else name
-    return (
-        "н/д",
-        "н/д",
-        "н/д",
-        [(name, False, f"ошибка: {error}", "-") for name in server.monitor_containers],
-        "н/д",
-        [],
-        [],
-        [],
-    )
 
 
 def _dns_snapshot_values(
@@ -237,11 +206,7 @@ async def build_status_snapshot_uncached(
         return await build_status_snapshot_mixed(update, server)
 
     admin_mode = is_admin(update)
-    payload = (
-        await build_status_payload_remote(admin_mode, server)
-        if server.mode == "ssh"
-        else await build_status_payload_local(admin_mode, server)
-    )
+    payload = await build_status_payload_local(admin_mode, server)
     uptime, memory, disk, _, ufw_state, allow, deny, reject = payload
     dns_ok, dns_total, dns_bad, dns_unknown, dns_details = _dns_snapshot_values(server)
     return StatusSnapshot(
@@ -264,7 +229,7 @@ async def build_status_snapshot_uncached(
         containers=docker_views_from_cache(server),
         tls_certificates=tls_views(server.key, admin_mode=admin_mode),
         admin_mode=admin_mode,
-        source_mode="ssh",
+        source_mode="local",
     )
 
 

@@ -1,24 +1,25 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
 from app.config import inventory as inventory_module
 from app.config.inventory import InventoryError, load_inventory_directory, load_inventory_document
-from app.config.servers import load_servers
+from app.config.servers import load_servers, server_monitoring_fingerprint
 
 
-def _server(*, key: str = "nl", transport: str = "ssh") -> dict[str, object]:
-    target = "maintbot@example.com:1606" if transport == "ssh" else ""
+def _server(*, key: str = "nl", transport: str = "panel") -> dict[str, object]:
     return {
         "version": 1,
         "key": key,
         "label": "Example remote server",
         "flag": "NL",
         "display_order": 20 if key == "nl" else 10,
-        "connection": {"transport": transport, "target": target},
+        "connection": {"transport": transport},
         "monitoring": {
             "source": "remnawave",
             "node_uuid": "00000000-0000-0000-0000-000000000001",
@@ -32,9 +33,9 @@ def _server(*, key: str = "nl", transport: str = "ssh") -> dict[str, object]:
                 "tls_fallback_ports": [8443],
             }
         ],
-        "docker": {"containers": ["remnanode", "remnawave-nginx"]},
+        "docker": {"containers": ["remnanode", "remnawave-nginx"] if transport == "local" else []},
         "fail2ban": {
-            "enabled": True,
+            "enabled": transport == "local",
             "log_path": "/var/log/fail2ban.log",
             "timezone": "Europe/Amsterdam",
         },
@@ -58,12 +59,31 @@ def test_inventory_scans_arbitrarily_named_json_files_in_stable_order(tmp_path: 
 
     assert list(servers) == ["main", "nl"]
     server = servers["nl"]
-    assert server.ssh_target == "maintbot@example.com:1606"
+    assert server.mode == "panel"
     assert server.monitoring_source == "remnawave"
     assert server.check_a_domains == ["tls-fallback.example.com"]
-    assert server.monitor_containers == ["remnanode", "remnawave-nginx"]
+    assert server.monitor_containers == []
     assert server.tls_endpoints[0].primary_port == 443
     assert server.tls_endpoints[0].fallback_ports == (8443,)
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        ("local", "4b789de89c0aad29c1dd2ff639b41ebc1bcbfeddb79a35ce55abd87691ebe71d"),
+        ("panel", "e110d21d6a917f645ff9fe0394c7e1a15c95007ebbe7bff4f3c509c81583ccf0"),
+    ],
+)
+def test_existing_monitoring_identity_survives_ssh_removal(
+    tmp_path: Path, mode: Literal["local", "panel"], expected: str
+) -> None:
+    _write(tmp_path, "server.json", _server(transport=mode))
+    server = load_servers(tmp_path, timezone_name="Europe/Moscow")["nl"]
+
+    # Digests produced by the pre-removal fingerprint for the same inventory.
+    assert server_monitoring_fingerprint(server) == expected
+    other_mode: Literal["local", "panel"] = "panel" if mode == "local" else "local"
+    assert server_monitoring_fingerprint(replace(server, mode=other_mode)) != expected
 
 
 @pytest.mark.parametrize(
@@ -99,6 +119,16 @@ def test_inventory_requires_uuid_for_remnawave_source(tmp_path: Path) -> None:
         load_inventory_document(path)
 
 
+@pytest.mark.parametrize("connection", [{"transport": "ssh"}, {"transport": "panel", "target": ""}])
+def test_inventory_rejects_removed_connection_options(tmp_path: Path, connection: dict[str, str]) -> None:
+    document = _server()
+    document["connection"] = connection
+    path = _write(tmp_path, "server.json", document)
+
+    with pytest.raises(InventoryError):
+        load_inventory_document(path)
+
+
 def test_inventory_rejects_duplicate_logical_keys_across_files(tmp_path: Path) -> None:
     _write(tmp_path, "first.json", _server(key="same"))
     _write(tmp_path, "completely-different-name.json", _server(key="same"))
@@ -110,7 +140,7 @@ def test_inventory_rejects_duplicate_logical_keys_across_files(tmp_path: Path) -
 def test_inventory_rejects_duplicate_json_keys(tmp_path: Path) -> None:
     path = tmp_path / "duplicate.json"
     path.write_text(
-        '{"version":1,"key":"one","key":"two","label":"Server","connection":{"transport":"local","target":""}}',
+        '{"version":1,"key":"one","key":"two","label":"Server","connection":{"transport":"local"}}',
         encoding="utf-8",
     )
 

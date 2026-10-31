@@ -9,10 +9,7 @@ import pytest
 
 from app.config.servers import ServerTarget
 from app.monitoring.docker import local as docker_service
-from app.monitoring.docker.presentation import MAX_DOCKER_STATUS_CHARS
 from app.monitoring.remnawave import client as remnawave_metrics
-from app.monitoring.remote import docker as remote_docker
-from app.monitoring.remote import status as remote_status
 from app.monitoring.status import cache as status_cache
 from app.monitoring.status import collectors as status_collectors
 from app.monitoring.status import dns as status_dns
@@ -127,40 +124,6 @@ async def test_local_docker_inventory_includes_all_states_and_expected_missing(m
 
 
 @pytest.mark.asyncio
-async def test_remote_docker_empty_inventory_is_available(monkeypatch) -> None:
-    async def fake_ssh_run_shell(target, script, *, timeout):
-        assert "docker" in script
-        return 0, "__MBOT_DOCKER_OK__|1\n", ""
-
-    monkeypatch.setattr(remote_docker, "ssh_run_shell", fake_ssh_run_shell)
-
-    assert await remote_docker.remote_docker_containers("root@example.com", []) == []
-
-
-@pytest.mark.asyncio
-async def test_remote_docker_ssh_error_is_normalized_deduplicated_and_clipped(monkeypatch) -> None:
-    repeated_line = "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!"
-    stderr = (f"  {repeated_line}  \n" * 200) + ("detail " * 2000)
-
-    async def fake_ssh_run_shell(target, script, *, timeout):
-        return 255, "", stderr
-
-    monkeypatch.setattr(remote_docker, "ssh_run_shell", fake_ssh_run_shell)
-
-    containers = await remote_docker.remote_docker_containers(
-        "root@example.com",
-        ["remnanode", "remnawave-nginx"],
-    )
-
-    statuses = [item[2] for item in containers]
-    assert len(set(statuses)) == 1
-    assert statuses[0].count(repeated_line) == 1
-    assert "\n" not in statuses[0]
-    assert "  " not in statuses[0]
-    assert len(statuses[0]) <= MAX_DOCKER_STATUS_CHARS
-
-
-@pytest.mark.asyncio
 async def test_regular_status_uses_docker_cache_without_live_docker_call(monkeypatch) -> None:
     server = ServerTarget(
         key="test",
@@ -204,37 +167,6 @@ async def test_regular_status_uses_docker_cache_without_live_docker_call(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_remote_status_can_skip_docker_section(monkeypatch) -> None:
-    async def fake_ssh_run_shell(target, script, *, timeout):
-        assert target == "root@example.com"
-        assert "__MBOT_SEC_DOCKER_STATUS__" not in script
-        assert "docker-ps" not in script
-        return (
-            0,
-            (
-                "__MBOT_SEC_UPTIME__\n120.0 0.0\n"
-                "__MBOT_SEC_MEMINFO__\nMemTotal: 2048 kB\nMemAvailable: 1024 kB\n"
-                "__MBOT_SEC_DF__\nFilesystem 1B-blocks Used Available Use% Mounted on\n"
-                "/dev/test 200 100 100 50% /\n"
-                "__MBOT_SEC_UFW__\nStatus: active\n"
-            ),
-            "",
-        )
-
-    monkeypatch.setattr(remote_status, "ssh_run_shell", fake_ssh_run_shell)
-
-    result = await remote_status.remote_status_bundle(
-        "root@example.com",
-        ["api"],
-        admin_mode=False,
-        include_docker=False,
-    )
-
-    assert result.ok is True
-    assert result.containers == []
-
-
-@pytest.mark.asyncio
 async def test_docker_cache_refresh_persists_inventory(monkeypatch) -> None:
     server = ServerTarget(
         key="test",
@@ -273,12 +205,11 @@ async def test_daily_node_refresh_bounds_server_concurrency(monkeypatch) -> None
             key=f"srv{index}",
             label=f"Server {index}",
             flag="",
-            mode="ssh",
+            mode="local",
             expected_a_ip="",
             check_a_domains=[],
             monitor_containers=[],
             fail2ban_log_path="/var/log/fail2ban.log",
-            ssh_target=f"maintbot@srv{index}.example.com",
         )
         for index in range(12)
     }

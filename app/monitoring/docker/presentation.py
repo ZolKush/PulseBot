@@ -40,7 +40,6 @@ def is_docker_problem(item: DockerContainerView) -> bool:
         or "unhealthy" in status
         or status == "не найден"
         or "недоступен" in status
-        or "ssh ошибка" in status
         or status.startswith("ошибка:")
     )
 

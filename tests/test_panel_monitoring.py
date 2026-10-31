@@ -14,7 +14,7 @@ from app.config.servers import ServerTarget, build_servers, server_monitoring_fi
 from app.monitoring.docker import handlers as docker_handlers
 from app.monitoring.fail2ban import source as fail2ban_source
 from app.monitoring.remnawave.models import MetricsSnapshot, NodeMetrics
-from app.monitoring.status import cache, collectors, docker, jobs, keyboards, ssh
+from app.monitoring.status import cache, collectors, docker, jobs, keyboards, local
 from app.monitoring.status.views import format_status_message
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,7 +47,6 @@ def test_panel_inventory_rejects_host_operations(tmp_path, change):
 def test_panel_transport_changes_monitoring_identity():
     server = _server()
     assert server.mode == "panel"
-    assert server.ssh_target == ""
     assert server_monitoring_fingerprint(server) != server_monitoring_fingerprint(replace(server, mode="local"))
 
 
@@ -75,7 +74,7 @@ async def test_panel_status_uses_metrics_and_ignores_old_host_cache(isolated_sto
     )
     monkeypatch.setattr(collectors, "get_metrics_snapshot", metrics)
     monkeypatch.setattr(collectors, "is_admin", lambda update: True)
-    for name in ("remote_status_bundle", "check_uptime", "meminfo", "disk_root", "ufw_summary_for_admin"):
+    for name in ("check_uptime", "meminfo", "disk_root", "ufw_summary_for_admin"):
         monkeypatch.setattr(collectors, name, AsyncMock(side_effect=AssertionError("host probe executed")))
 
     snapshot = await collectors.build_status_snapshot_uncached(SimpleNamespace(), server)
@@ -93,11 +92,40 @@ async def test_panel_status_uses_metrics_and_ignores_old_host_cache(isolated_sto
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["network", "missing", "incomplete", "offline"])
+async def test_unavailable_panel_metrics_remain_unknown_without_host_probes(monkeypatch, failure):
+    server = _server()
+    node = NodeMetrics(
+        server.remnawave_uuid, 0 if failure == "offline" else 1, None, None, None, None, None, None, None
+    )
+    metrics = MetricsSnapshot(
+        nodes={server.remnawave_uuid: node} if failure in {"incomplete", "offline"} else {},
+        error="panel unavailable" if failure == "network" else "",
+    )
+    monkeypatch.setattr(collectors, "get_metrics_snapshot", AsyncMock(return_value=metrics))
+    monkeypatch.setattr(collectors, "is_admin", lambda update: True)
+    for name in ("check_uptime", "meminfo", "disk_root", "ufw_summary_for_admin"):
+        monkeypatch.setattr(collectors, name, AsyncMock(side_effect=AssertionError("host probe executed")))
+
+    snapshot = await collectors.build_status_snapshot_uncached(SimpleNamespace(), server)
+
+    assert (snapshot.uptime_text, snapshot.memory_raw, snapshot.disk_raw, snapshot.ufw_state) == ("н/д",) * 4
+    assert snapshot.node_online is (False if failure == "offline" else None)
+    assert bool(snapshot.metrics_error) is (failure != "offline")
+    callbacks = {
+        button.callback_data
+        for row in keyboards.status_actions_keyboard(True, server.key).inline_keyboard
+        for button in row
+    }
+    assert not any("ssh" in str(value) for value in callbacks)
+
+
+@pytest.mark.asyncio
 async def test_panel_manual_and_scheduled_host_refreshes_do_not_probe(isolated_storage, monkeypatch):
     server = _server()
     for module, names in (
-        (ssh, ("remote_status_bundle", "disk_root", "ufw_summary_for_admin")),
-        (docker, ("remote_docker_containers", "docker_containers")),
+        (local, ("disk_root", "ufw_summary_for_admin")),
+        (docker, ("docker_containers",)),
     ):
         for name in names:
             monkeypatch.setattr(module, name, AsyncMock(side_effect=AssertionError("host probe executed")))
@@ -108,8 +136,7 @@ async def test_panel_manual_and_scheduled_host_refreshes_do_not_probe(isolated_s
     monkeypatch.setattr(jobs, "refresh_docker_status", scheduled_docker)
     monkeypatch.setattr(jobs, "collect_disk_ufw", scheduled_disk)
 
-    assert not (await ssh.collect_disk_ufw(server, admin_mode=True))["ok"]
-    assert not await ssh.primary_monitoring_failed(server, force_refresh=True)
+    assert not (await local.collect_disk_ufw(server, admin_mode=True))["ok"]
     await docker.refresh_docker_status(server)
     await jobs.docker_status_refresh(SimpleNamespace())
     await jobs.daily_node_status_refresh(SimpleNamespace())
@@ -131,27 +158,25 @@ async def test_panel_stale_controls_cannot_read_host(monkeypatch):
 
     callbacks = {
         button.callback_data
-        for row in keyboards.status_actions_keyboard(True, server.key, show_ssh_fallback=True).inline_keyboard
+        for row in keyboards.status_actions_keyboard(True, server.key).inline_keyboard
         for button in row
     }
     assert f"status:refresh:{server.key}" in callbacks
     assert f"tls:list:{server.key}" in callbacks
-    assert not any(str(value).startswith(("docker:", "f2b:", "status:ufw:", "status:ssh")) for value in callbacks)
+    assert not any(str(value).startswith(("docker:", "f2b:", "status:ufw:")) for value in callbacks)
     assert not docker_handlers._is_server_container_allowed(server.key, "api")
     assert docker_handlers._filtered_containers(server.key) == []
     assert await fail2ban_source.file_identity(server.key, "/var/log/fail2ban.log") is None
     forbidden.assert_not_awaited()
 
 
-def test_panel_preflight_does_not_require_ssh_or_local_helper(monkeypatch):
+def test_panel_preflight_does_not_require_local_helper(monkeypatch):
     from app.config import checks
 
     monkeypatch.setattr(config, "SERVERS", {"panel": _server()})
-    monkeypatch.setattr(config, "SSH_KNOWN_HOSTS_FILE", "")
-    monkeypatch.setattr(config, "SSH_IDENTITY_FILE", "")
     monkeypatch.setattr(config, "PRIVILEGED_HELPER_BIN", "/missing/helper")
     monkeypatch.setattr(config, "SUDO_BIN", "")
 
     errors = checks.validate_configuration()
 
-    assert not any("SSH_" in item or "helper" in item or "sudo" in item for item in errors)
+    assert not any("helper" in item or "sudo" in item for item in errors)

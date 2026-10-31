@@ -12,7 +12,6 @@ from app.config import ServerTarget, server_monitoring_fingerprint
 from app.messaging import outbox
 from app.monitoring.docker import handlers as docker
 from app.monitoring.remnawave import client, parser
-from app.monitoring.remote import status as remote
 from app.monitoring.status import dns, reconciliation
 from app.monitoring.tls import checks, policy
 
@@ -122,15 +121,6 @@ async def test_failed_diagnostic_handshake_cannot_hide_a_bad_primary_certificate
     assert set(ports) == {443}
     assert result["effective_port"] == 443
     assert result["used_fallback"] is False
-
-
-@pytest.mark.parametrize("raw", ["1e200 0", "-1 0", "nan 0"])
-def test_invalid_remote_uptime_is_unknown(raw):
-    assert remote._parse_uptime_from_proc(raw) == "н/д"
-
-
-def test_missing_remote_memory_is_unknown():
-    assert remote._parse_meminfo_text("") == "н/д"
 
 
 @pytest.mark.asyncio

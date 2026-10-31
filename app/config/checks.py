@@ -37,16 +37,12 @@ def _writable_parent(path_value: str, field_name: str) -> list[str]:
     return list(dict.fromkeys(errors))
 
 
-def _readable_file(path_value: str, field_name: str, *, private: bool = False) -> list[str]:
+def _readable_file(path_value: str, field_name: str) -> list[str]:
     path = Path(path_value)
     if not path.is_file():
         return [f"{field_name}: файл не найден: {path}"]
     if not os.access(path, os.R_OK):
         return [f"{field_name}: файл недоступен для чтения: {path}"]
-    if private and os.name != "nt":
-        mode = stat.S_IMODE(path.stat().st_mode)
-        if mode & 0o077:
-            return [f"{field_name}: приватный ключ должен иметь права 0600 или строже: {path}"]
     return []
 
 
@@ -146,9 +142,6 @@ def validate_configuration() -> list[str]:
         PRIVILEGED_HELPER_BIN,
         SERVER_CONFIG_DIR,
         SERVERS,
-        SSH_IDENTITY_FILE,
-        SSH_KNOWN_HOSTS_FILE,
-        SSH_STRICT_HOST_KEY_CHECKING,
         SUDO_BIN,
     )
     from .locations import SECRETS_ENV_FILE
@@ -176,23 +169,6 @@ def validate_configuration() -> list[str]:
         else:
             for server_file in server_files:
                 errors.extend(_readable_file(str(server_file), f"SERVER_CONFIG_DIR/{server_file.name}"))
-    for key, server in SERVERS.items():
-        if server.mode == "ssh" and not server.ssh_target:
-            errors.append(f"SERVERS[{key}]: отсутствует SSH target")
-
-    has_ssh_servers = any(server.mode == "ssh" for server in SERVERS.values())
-    if has_ssh_servers:
-        if SSH_STRICT_HOST_KEY_CHECKING != "yes":
-            errors.append("SSH_STRICT_HOST_KEY_CHECKING должен быть yes для удалённых серверов")
-        if not SSH_KNOWN_HOSTS_FILE:
-            errors.append("SSH_KNOWN_HOSTS_FILE обязателен для удалённых серверов")
-        else:
-            errors.extend(_readable_file(SSH_KNOWN_HOSTS_FILE, "SSH_KNOWN_HOSTS_FILE"))
-        if not SSH_IDENTITY_FILE:
-            errors.append("SSH_IDENTITY_FILE обязателен для удалённых серверов")
-        else:
-            errors.extend(_readable_file(SSH_IDENTITY_FILE, "SSH_IDENTITY_FILE", private=True))
-
     if os.name != "nt" and any(server.mode == "local" for server in SERVERS.values()):
         helper = Path(PRIVILEGED_HELPER_BIN)
         if not helper.is_absolute() or not helper.is_file() or not os.access(helper, os.X_OK):

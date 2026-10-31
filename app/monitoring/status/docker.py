@@ -9,7 +9,6 @@ from datetime import datetime
 from ...config import TZ, ServerTarget, logger
 from ...storage import set_docker_status_cache
 from ..docker.local import docker_containers
-from ..remote.docker import remote_docker_containers
 from .cache import docker_failure_rows, invalidate_status_cache
 from .common import exc_brief
 
@@ -23,11 +22,7 @@ async def refresh_docker_status(server: ServerTarget, *, source: str = "manual")
     async with _REFRESH_LOCKS.setdefault(server.key, asyncio.Lock()):
         started = time.monotonic()
         try:
-            containers = (
-                await remote_docker_containers(server.ssh_target, server.monitor_containers)
-                if server.mode == "ssh"
-                else await docker_containers(server.monitor_containers)
-            )
+            containers = await docker_containers(server.monitor_containers)
         except Exception as exc:
             logger.exception("Docker status refresh failed for server=%s", server.key)
             containers = docker_failure_rows(server, f"ошибка: {exc_brief(exc)}")

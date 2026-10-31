@@ -57,7 +57,7 @@ def _docker_chip(snapshot: StatusSnapshot) -> str:
     unavailable = False
     for container in snapshot.containers:
         status = (container.status_text or "").strip().lower()
-        if "docker недоступен" in status or "ssh ошибка" in status or status.startswith("ошибка:"):
+        if "docker недоступен" in status or status.startswith("ошибка:"):
             unavailable = True
             continue
         if status == "не найден":

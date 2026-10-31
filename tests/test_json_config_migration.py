@@ -142,3 +142,78 @@ def test_legacy_inventory_stage_rejects_ambiguous_env(
 def test_legacy_inventory_stage_rejects_missing_env(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="not a regular file"):
         _load_legacy_env(tmp_path / "missing.env")
+
+
+def test_migration_converts_old_remote_nodes_without_ssh_configuration(tmp_path: Path) -> None:
+    env, inventory = _source_files(tmp_path)
+    with env.open("a", encoding="utf-8") as stream:
+        stream.write("SSH_IDENTITY_FILE=/old/key\nSSH_KNOWN_HOSTS_FILE=/old/hosts\nSSH_STRICT_HOST_KEY_CHECKING=yes\n")
+    with inventory.open("a", encoding="utf-8") as stream:
+        stream.write("""
+[servers.remote]
+label = "Remote"
+[servers.remote.connection]
+transport = "ssh"
+target = "user@example.com"
+[servers.remote.monitoring]
+source = "remnawave"
+node_uuid = "00000000-0000-0000-0000-000000000001"
+[servers.remote.docker]
+containers = ["api"]
+[servers.remote.fail2ban]
+enabled = true
+""")
+    output = tmp_path / "conf"
+
+    assert (
+        migrate(
+            env_path=env,
+            inventory_path=inventory,
+            template_path=ROOT / "examples/conf/bot.json",
+            output_dir=output,
+        )
+        == 2
+    )
+
+    bot = json.loads((output / "bot.json").read_text(encoding="utf-8"))
+    assert not any(key.startswith("SSH_") for key in bot)
+    remote = json.loads((output / "servers/020-remote.json").read_text(encoding="utf-8"))
+    assert remote["connection"] == {"transport": "panel"}
+    assert remote["docker"]["containers"] == []
+    assert remote["fail2ban"]["enabled"] is False
+
+
+def test_migration_rejects_ssh_only_inventory_without_writing_output(tmp_path: Path) -> None:
+    env, inventory = _source_files(tmp_path)
+    inventory.write_text(
+        'version=1\n[servers.remote]\nlabel="Remote"\n[servers.remote.connection]\ntransport="ssh"\n',
+        encoding="utf-8",
+    )
+    output = tmp_path / "conf"
+    with pytest.raises(ConfigMigrationError, match="configure a RemnaWave node"):
+        migrate(
+            env_path=env,
+            inventory_path=inventory,
+            template_path=ROOT / "examples/conf/bot.json",
+            output_dir=output,
+        )
+    assert not output.exists()
+
+
+def test_migration_rejects_malformed_legacy_remote_fail2ban(tmp_path: Path) -> None:
+    source = tmp_path / "servers.toml"
+    source.write_text(
+        """version=1
+[servers.remote]
+label="Remote"
+fail2ban=false
+[servers.remote.connection]
+transport="ssh"
+[servers.remote.monitoring]
+source="remnawave"
+node_uuid="00000000-0000-0000-0000-000000000001"
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigMigrationError, match="invalid fail2ban block"):
+        migrate_config_layout.load_toml_servers(source)
