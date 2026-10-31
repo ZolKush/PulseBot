@@ -3,35 +3,7 @@ services:
     image: maintbot:standalone
     pull_policy: build
     build:
-      context: https://github.com/ZolKush/ServerBot.git#${MAINTBOT_SOURCE_REF:-dev}
-    entrypoint: ["/bin/sh", "-ec"]
-    command:
-      - |
-        umask 077
-        if [ ! -e /var/lib/maintbot/maintbot.sqlite3 ] &&
-           [ ! -e /var/lib/maintbot/storage_layout.json ] && {
-          [ -e /var/lib/maintbot/user_data.json ] ||
-          [ -e /var/lib/maintbot/important_data.json ];
-        }; then
-          printf '%s\n' 'Monolithic JSON storage is not supported; storage_layout.json is required.' >&2
-          exit 2
-        fi
-        if [ ! -e /var/lib/maintbot/maintbot.sqlite3 ] &&
-           [ -e /var/lib/maintbot/storage_layout.json ]; then
-          set -- --data-dir /var/lib/maintbot
-          if [ -n "$${MAINTBOT_PTB_PICKLE:-}" ]; then
-            case "$$MAINTBOT_PTB_PICKLE" in
-              /*) set -- "$$@" --ptb-pickle "$$MAINTBOT_PTB_PICKLE" ;;
-              *) set -- "$$@" --ptb-pickle "/var/lib/maintbot/$$MAINTBOT_PTB_PICKLE" ;;
-            esac
-          elif [ -f /var/lib/maintbot/telegram-migration.pickle ]; then
-            set -- "$$@" --ptb-pickle /var/lib/maintbot/telegram-migration.pickle
-          fi
-          python -m app.persistence.migrate_sqlite "$$@"
-        fi
-        python -m app.persistence.bootstrap --data-dir /var/lib/maintbot
-        python -m app.config_check
-        exec python -m app.launcher
+      context: https://github.com/ZolKush/PulseBot.git#${MAINTBOT_SOURCE_REF:-dev}
     restart: unless-stopped
     init: true
     read_only: true

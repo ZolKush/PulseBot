@@ -5,7 +5,9 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from telegram.ext import ExtBot
 
+from app.bot.persistence_sqlite import SQLitePersistence
 from app.persistence import MigrationError, SchemaError, SplitJsonBackend, SQLiteBackend, StorageConflictError
 from app.persistence.layout import default_store_data
 from app.persistence.migrate_sqlite import migrate_to_sqlite
@@ -20,21 +22,54 @@ def _pickle() -> bytes:
     return pickle.dumps(
         {
             "user_data": {42: {"pending_reply": 3}},
-            "chat_data": {},
-            "bot_data": {},
-            "callback_data": None,
+            "chat_data": {-42: {"panel": 17}},
+            "bot_data": {"navigation": {"42": [17, 18]}},
+            "callback_data": ([("button", 1.0, {"request": 5})], {"query": "button"}),
             "conversations": {"support": {(42, 42): 8}},
         }
     )
 
 
-def test_split_sqlite_migration_dry_run_backup_restart_and_idempotence(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_split_sqlite_migration_dry_run_backup_restart_and_idempotence(tmp_path: Path) -> None:
     root = tmp_path / "data"
     stores = default_store_data()
     stores["users.profiles"] = {"42": {"user_id": 42, "nickname": "Example"}}
     stores["access.grants"] = {"42": {"role": "user", "access_state": "approved"}}
     stores["subscriptions.accounts"] = {"42": {"service_tier": "basic"}}
+    stores["subscriptions.requests"] = {
+        "next_id": 5,
+        "items": {"5": {"id": 5, "user_id": 42, "kind": "purchase", "status": "pending", "amount_rub": 300}},
+    }
+    stores["subscriptions.billing_settings"] = {"standard_price_rub": 300, "payment_bank": "Example Bank"}
+    stores["settings.help_and_contacts"] = {"help_text": "Помощь", "support_email": "support@example.com"}
     stores["support.tickets"] = {"next_id": 7, "items": {"7": {"id": 7, "user_id": 42}}}
+    stores["support.ticket_messages"] = {
+        "7": [{"text": "Нужна помощь", "attachments": [{"type": "photo", "file_id": "example-photo"}]}]
+    }
+    stores["maintenance.state"] = {
+        "active": {"active": True, "id": "work-1", "expected_end": "2026-11-01T12:00:00+00:00"},
+        "scheduled": {"id": "work-2", "start_at": "2026-11-02T10:00:00+00:00"},
+    }
+    stores["messaging.outbox"] = {
+        "event-1": {
+            "id": "event-1",
+            "origin": "important",
+            "kind": "message",
+            "payload": {"text": "Уведомление"},
+            "recipients": {"42": {"status": "pending", "attempts": 2, "part_index": 1}},
+            "completion": {"type": "fail2ban_cursor", "server_key": "node", "cursor": {"offset": 123}},
+        }
+    }
+    stores["audit.events"] = [{"action": "request_created", "target_user_id": 42}]
+    stores["monitoring.dns_cache"] = {"node": {"status": "ok", "addresses": ["192.0.2.1"]}}
+    stores["monitoring.node_status_cache"] = {"node": {"online": False, "cpu": None}}
+    stores["monitoring.docker_cache"] = {
+        "node": {"containers": [{"name": "example", "running": True, "status": "Up", "restarts": "2"}]}
+    }
+    stores["monitoring.tls_state"] = {"example.com:443": {"domain": "example.com", "status": "expiring"}}
+    stores["monitoring.fail2ban_cursors"] = {"node": {"inode": 100, "offset": 123}}
+    assert all(value != default_store_data()[name] for name, value in stores.items())
     SplitJsonBackend(root).bootstrap(stores=stores)
     ptb = root / "telegram/persistence.pickle"
     ptb.parent.mkdir()
@@ -55,6 +90,15 @@ def test_split_sqlite_migration_dry_run_backup_restart_and_idempotence(tmp_path:
             assert (Path(report.backup_path) / name).read_bytes() == payload
     with sqlite3.connect(report.database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM telegram_conversations").fetchone()[0] == 1
+    telegram = SQLitePersistence(report.database)
+    telegram.set_bot(ExtBot("123:LOCAL_ONLY"))
+    legacy_state = pickle.loads(_pickle())
+    assert await telegram.get_user_data() == legacy_state["user_data"]
+    assert await telegram.get_chat_data() == legacy_state["chat_data"]
+    assert await telegram.get_bot_data() == legacy_state["bot_data"]
+    assert await telegram.get_callback_data() == legacy_state["callback_data"]
+    assert await telegram.get_conversations("support") == legacy_state["conversations"]["support"]
+    await telegram.update_user_data(42, {"pending_reply": 9})
     with SQLiteBackend(root).unit_of_work() as uow:
         uow.profiles.put(43, {"user_id": 43})
         uow.access.put(43, {"role": "user", "access_state": "approved"})
@@ -62,6 +106,9 @@ def test_split_sqlite_migration_dry_run_backup_restart_and_idempotence(tmp_path:
         uow.commit()
     assert migrate_to_sqlite(root).already_migrated
     assert SQLiteBackend(root).inspect().data("users.profiles")["43"] == {"user_id": 43}
+    restarted = SQLitePersistence(report.database)
+    restarted.set_bot(ExtBot("456:RESTARTED"))
+    assert await restarted.get_user_data() == {42: {"pending_reply": 9}}
 
 
 @pytest.mark.parametrize("dry_run", [True, False])

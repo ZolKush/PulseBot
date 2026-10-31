@@ -38,7 +38,10 @@ def test_empty_layout_bootstrap_refuses_monolithic_source(tmp_path: Path, source
     assert not (root / "maintbot.sqlite3").exists()
 
 
-@pytest.mark.parametrize("source_name", ["users/profiles.json", "telegram/persistence.pickle", "ptb_persistence.bak"])
+@pytest.mark.parametrize(
+    "source_name",
+    ["users/profiles.json", "telegram/persistence.pickle", "ptb_persistence.bak", "telegram-migration.pickle"],
+)
 def test_bootstrap_refuses_partial_legacy_data(tmp_path: Path, source_name: str) -> None:
     source = tmp_path / source_name
     source.parent.mkdir(parents=True, exist_ok=True)

@@ -50,6 +50,7 @@ def _initialize(root: Path) -> BootstrapReport:
     legacy_paths = (
         LAYOUT_FILE,
         ".transactions",
+        "telegram-migration.pickle",
         "telegram/persistence.pickle",
         "telegram/persistence.pickle.bak",
         "ptb_persistence",
