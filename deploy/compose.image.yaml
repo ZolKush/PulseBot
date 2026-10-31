@@ -1,0 +1,40 @@
+services:
+  maintbot:
+    image: ${MAINTBOT_IMAGE:-maintbot:latest}
+    pull_policy: never
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 90s
+    environment:
+      MAINTBOT_CONFIG_DIR: /etc/maintbot/conf
+      SECRETS_ENV_PATH: /run/secrets/maintbot.env
+      MAINTBOT_PTB_PICKLE: ${MAINTBOT_PTB_PICKLE:-}
+    volumes:
+      - type: bind
+        source: ./data
+        target: /var/lib/maintbot
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./data/conf
+        target: /etc/maintbot/conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./data/env.secrets
+        target: /run/secrets/maintbot.env
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,mode=1777
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import uuid
@@ -13,6 +14,16 @@ from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 
 from .deployment_config import DeploymentPreparationError, docker_configuration, load_object, write_object
+
+_IMAGE_PLACEHOLDER = "${MAINTBOT_IMAGE:-maintbot:latest}"
+_IMAGE_PATH_COMPONENT = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
+_IMAGE_DOMAIN_COMPONENT = r"(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]*[A-Za-z0-9])"
+_IMAGE_REGISTRY = rf"(?:{_IMAGE_DOMAIN_COMPONENT}(?:\.{_IMAGE_DOMAIN_COMPONENT})*|\[[A-Fa-f0-9:]+\])(?::[0-9]+)?"
+_IMAGE_REFERENCE = re.compile(
+    rf"(?P<name>(?:{_IMAGE_REGISTRY}/)?{_IMAGE_PATH_COMPONENT}(?:/{_IMAGE_PATH_COMPONENT})*)"
+    r"(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?"
+    r"(?:@sha256:[0-9a-f]{64})?"
+)
 
 
 @dataclass(frozen=True)
@@ -55,6 +66,25 @@ def _source_format(data_dir: Path) -> str:
     if (data_dir / "storage_layout.json").is_file():
         return "split-json-v1"
     raise DeploymentPreparationError("source data requires SQLite or split JSON layout with storage_layout.json")
+
+
+def _compose_document(project: Path, image: str | None) -> str:
+    if image is not None:
+        reference = _IMAGE_REFERENCE.fullmatch(image) if len(image) <= 512 else None
+        if reference is None or len(reference.group("name")) > 255:
+            raise DeploymentPreparationError("image must be a valid Docker image reference")
+    template = project / "deploy" / ("compose.image.yaml" if image is not None else "compose.remote.yaml")
+    if not template.is_file():
+        raise DeploymentPreparationError("deployment Compose template is missing")
+    try:
+        document = template.read_text(encoding="utf-8")
+    except UnicodeError as exc:
+        raise DeploymentPreparationError("deployment Compose template must be valid UTF-8") from exc
+    if image is not None:
+        if document.count(_IMAGE_PLACEHOLDER) != 1:
+            raise DeploymentPreparationError("image deployment Compose template has an invalid image placeholder")
+        document = document.replace(_IMAGE_PLACEHOLDER, json.dumps(image))
+    return document
 
 
 def _selected_config(project: Path, selected: Path | None) -> Path:
@@ -121,6 +151,7 @@ def prepare_deployment(
     config_dir: Path | None = None,
     secrets_file: Path | None = None,
     ptb_pickle: Path | None = None,
+    image: str | None = None,
 ) -> DeploymentReport:
     """Prepare a new bundle; original data, settings and secrets stay untouched."""
     if any(_is_link(path) for path in (output_dir, *output_dir.absolute().parents)):
@@ -139,9 +170,7 @@ def prepare_deployment(
     secret = project / (secrets_file or Path("app/env.secrets"))
     if not secret.is_file() or _is_link(secret) or secret.stat().st_size == 0:
         raise DeploymentPreparationError("a nonempty existing secrets file is required")
-    compose = project / "deploy/compose.remote.yaml"
-    if not compose.is_file():
-        raise DeploymentPreparationError("remote deployment Compose template is missing")
+    compose = _compose_document(project, image)
     bot, servers, omitted = docker_configuration(
         config, template=project / "examples/conf/docker-bot.json", panel_only=panel_only
     )
@@ -177,7 +206,7 @@ def prepare_deployment(
         if pickle_path is not None:
             shutil.copyfile(pickle_path, copied / "telegram-migration.pickle")
             (copied / "telegram-migration.pickle").chmod(0o600)
-        shutil.copyfile(compose, temporary / "compose.yaml")
+        (temporary / "compose.yaml").write_text(compose, encoding="utf-8", newline="\n")
         if output.exists():
             raise DeploymentPreparationError("output appeared while preparing deployment")
         os.replace(temporary, output)
@@ -196,6 +225,7 @@ def main() -> int:
     parser.add_argument("--config-dir", type=Path)
     parser.add_argument("--secrets-file", type=Path)
     parser.add_argument("--ptb-pickle", type=Path)
+    parser.add_argument("--image", help="Use this locally loaded Docker image instead of a remote source build.")
     args = parser.parse_args()
     try:
         report = prepare_deployment(
@@ -205,6 +235,7 @@ def main() -> int:
             config_dir=args.config_dir,
             secrets_file=args.secrets_file,
             ptb_pickle=args.ptb_pickle,
+            image=args.image,
         )
     except DeploymentPreparationError as exc:
         print(f"Deployment preparation refused: {exc}", file=sys.stderr)

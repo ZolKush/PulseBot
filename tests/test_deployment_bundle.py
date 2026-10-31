@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
 from app.persistence import SplitJsonBackend
 from tools.deployment_config import DeploymentPreparationError
-from tools.prepare_deployment import prepare_deployment
+from tools.prepare_deployment import main, prepare_deployment
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -47,6 +48,7 @@ def _project(tmp_path: Path) -> Path:
     compose = project / "deploy/compose.remote.yaml"
     compose.parent.mkdir()
     compose.write_bytes(b"services:\n  maintbot:\n    image: synthetic-test-only\n")
+    (project / "deploy/compose.image.yaml").write_bytes((ROOT / "deploy/compose.image.yaml").read_bytes())
     return project
 
 
@@ -67,6 +69,7 @@ def test_bundle_copies_all_state_and_adapts_only_copied_config(tmp_path: Path) -
     assert report.omitted_host_servers == 1
     assert report.telegram_state_present
     assert sorted(path.name for path in output.iterdir()) == ["compose.yaml", "data"]
+    assert (output / "compose.yaml").read_bytes() == (project / "deploy/compose.remote.yaml").read_bytes()
     for relative in ("storage_layout.json", "users/profiles.json", ".hidden", "telegram/persistence.pickle"):
         assert (output / "data" / relative).read_bytes() == (project / "data" / relative).read_bytes()
     assert (output / "data/env.secrets").read_bytes() == (project / "app/env.secrets").read_bytes()
@@ -87,6 +90,87 @@ def test_bundle_copies_all_state_and_adapts_only_copied_config(tmp_path: Path) -
     backup = output / "data" / report.original_config_backup
     assert (backup / "bot.json").read_bytes() == (project / "data/conf/bot.json").read_bytes()
     assert (backup / "servers/local.json").is_file()
+
+
+@pytest.mark.parametrize(
+    "image", ["registry.example.com:5000/acme/team/maintbot:fixed-20261029", "maintbot@sha256:" + "a" * 64]
+)
+def test_loaded_image_bundle_pins_the_image_without_remote_build_or_pull(tmp_path: Path, image: str) -> None:
+    project = _project(tmp_path)
+    (project / "deploy/compose.remote.yaml").unlink()
+    before = _files(project)
+    output = tmp_path / "release"
+
+    report = prepare_deployment(project, output, panel_only=True, image=image)
+
+    assert _files(project) == before
+    assert report.source_format == "split-json-v1"
+    assert report.telegram_state_present
+    compose = (output / "compose.yaml").read_text(encoding="utf-8")
+    assert f'image: "{image}"' in compose
+    assert "pull_policy: never" in compose
+    assert "build:" not in compose
+    assert "MAINTBOT_IMAGE" not in compose
+    assert "entrypoint:" not in compose
+    assert "command:" not in compose
+    for relative in ("storage_layout.json", "users/profiles.json", ".hidden", "telegram/persistence.pickle"):
+        assert (output / "data" / relative).read_bytes() == (project / "data" / relative).read_bytes()
+    assert (output / "data/env.secrets").read_bytes() == (project / "app/env.secrets").read_bytes()
+    assert (output / "data/telegram-migration.pickle").read_bytes() == (
+        project / "data/telegram/persistence.pickle"
+    ).read_bytes()
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "",
+        "-bad",
+        "maintbot:two:colons",
+        "registry.example.com:5000/team:6000/maintbot:fixed",
+        "registry_bad:5000/maintbot:fixed",
+        "a" * 256,
+        "${PRIVATE_IMAGE}",
+        "maintbot:fixed\nbuild: .",
+        "maintbot:fixed;PRIVATE",
+    ],
+)
+def test_invalid_image_reference_is_refused_without_output_or_value_disclosure(tmp_path: Path, image: str) -> None:
+    project = _project(tmp_path)
+    before = _files(project)
+    output = tmp_path / "release"
+
+    with pytest.raises(DeploymentPreparationError, match="valid Docker image reference") as caught:
+        prepare_deployment(project, output, panel_only=True, image=image)
+
+    assert "PRIVATE" not in str(caught.value)
+    assert _files(project) == before
+    assert not output.exists()
+
+
+def test_cli_image_option_selects_the_loaded_image_template(tmp_path: Path, monkeypatch, capsys) -> None:
+    project = _project(tmp_path)
+    output = tmp_path / "release"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prepare_deployment",
+            "--project-dir",
+            str(project),
+            "--output",
+            str(output),
+            "--panel-only",
+            "--image",
+            "maintbot:fixed-test",
+        ],
+    )
+
+    assert main() == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["output_dir"] == str(output)
+    assert 'image: "maintbot:fixed-test"' in (output / "compose.yaml").read_text(encoding="utf-8")
 
 
 def test_host_only_omission_requires_explicit_flag(tmp_path: Path) -> None:
