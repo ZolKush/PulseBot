@@ -1,1 +1,1 @@
-"""Status snapshots, presentation, caching, routes, and jobs."""
+"""Live Zabbix status screens."""

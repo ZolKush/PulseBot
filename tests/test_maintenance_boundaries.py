@@ -8,9 +8,25 @@ from app import storage
 from app.config import TZ
 from app.maintenance import calendar, jobs, operations, policy, records
 from app.messaging.outbox import message_payload, process_outbox
+from app.monitoring.zabbix import ZabbixError
 from app.persistence.sqlite_backend import SQLiteBackend
 from app.users.staff import STAFF_TITLE_MAINTAINER
 from tests.product_support import _admin, _user
+
+
+def test_scope_pages_reach_all_hosts_and_clamp_after_inventory_shrinks():
+    hosts = {f"z{i}": f"Узел {i:03}" for i in range(1, 106)}
+    found = []
+    for page in range(11):
+        buttons = [b.callback_data for row in calendar.scope_kb(hosts, page).inline_keyboard for b in row]
+        keys = [data.removeprefix("maint:scope:") for data in buttons if data.startswith("maint:scope:z")]
+        assert len(keys) <= 10
+        assert ("maint:scope:page:" + str(page + 1) in buttons) == (page < 10)
+        assert ("maint:scope:page:" + str(page - 1) in buttons) == (page > 0)
+        assert "maint:scope:all" in buttons
+        found.extend(keys)
+    assert found == list(hosts)
+    assert calendar.scope_kb({"z12": "Узел"}, 99) == calendar.scope_kb({"z12": "Узел"}, 0)
 
 
 def test_unknown_maintenance_scope_never_expands_to_all_servers():
@@ -174,3 +190,21 @@ async def test_active_reminder_requires_a_valid_declared_deadline(isolated_stora
     await jobs.maint_restart_notify(MagicMock())
 
     assert not _reminder_events(record["id"])
+
+
+@pytest.mark.asyncio
+async def test_schedule_waits_for_zabbix_before_activation(isolated_storage, monkeypatch):
+    now = datetime.now(TZ)
+    schedule = records.build_scheduled_maintenance_record(
+        "z42", now - timedelta(minutes=1), now + timedelta(hours=1), 1, "Admin", label="Узел А"
+    )
+    await storage.set_scheduled_maintenance_record(dict(schedule))
+    inventory = AsyncMock(side_effect=[ZabbixError("timeout"), {"z42": "Узел А"}])
+    monkeypatch.setattr(jobs, "server_items", inventory)
+
+    await jobs.maint_schedule_tick(SimpleNamespace())
+    assert storage.get_scheduled_maintenance()["id"] == schedule["id"]
+    assert storage.get_active_maintenance() is None
+    await jobs.maint_schedule_tick(SimpleNamespace())
+    assert storage.get_scheduled_maintenance() is None
+    assert storage.get_active_maintenance()["scope_label"] == "Узел А"

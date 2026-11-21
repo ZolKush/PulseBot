@@ -4,7 +4,6 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-from telegram.error import Forbidden, NetworkError
 
 from app import storage
 from app.messaging import outbox
@@ -103,22 +102,6 @@ async def test_concurrent_user_updates_are_not_lost(isolated_storage: None) -> N
     assert on_disk.data("users.profiles")["42"]["nickname"] == "25"
 
 
-class _FlakyBot:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    async def send_message(self, **kwargs) -> None:
-        self.calls += 1
-        if self.calls == 1:
-            raise NetworkError("temporary test failure")
-
-
-class _PartiallyReachableBot:
-    async def send_message(self, **kwargs) -> None:
-        if kwargs["chat_id"] == 43:
-            raise Forbidden("recipient blocked the bot")
-
-
 class _RecordingBot:
     def __init__(self) -> None:
         self.messages: list[dict] = []
@@ -142,59 +125,14 @@ class _ReviewBot:
 
 
 @pytest.mark.asyncio
-async def test_fail2ban_cursor_advances_only_after_delivery(isolated_storage: None) -> None:
-    event = storage.make_outbox_event(
-        kind="fail2ban_daily",
-        recipient_ids=[42],
-        payload=outbox.message_payload("test"),
-    )
-    event["completion"] = {
-        "type": "fail2ban_cursor",
-        "server_key": "local",
-        "cursor": {"offset": 123, "updated_at": "2026-01-01T00:00:00+00:00"},
-    }
-
-    def seed(cfg: storage.ImportantData) -> None:
-        storage.enqueue_important_outbox(cfg, event)
-
-    await storage.update_important_data(seed)
-    bot = _FlakyBot()
-
-    await outbox.process_outbox(bot)
-    assert storage.get_fail2ban_cursor("local") is None
-    assert storage.outbox_snapshot()
-
-    event_id = event["id"]
-
-    def make_due(current: dict) -> dict:
-        current["recipients"]["42"]["next_attempt_at"] = ""
-        return current
-
-    await storage.mutate_outbox_event("important", event_id, make_due)
-    await outbox.process_outbox(bot)
-
-    assert storage.get_fail2ban_cursor("local")["offset"] == 123
-    assert storage.outbox_snapshot() == []
-
-
-@pytest.mark.asyncio
-async def test_fail2ban_terminal_admin_does_not_duplicate_digest_for_reachable_admin(isolated_storage: None) -> None:
-    event = storage.make_outbox_event(
-        kind="fail2ban_daily",
-        recipient_ids=[42, 43],
-        payload=outbox.message_payload("test"),
-    )
-    event["completion"] = {
-        "type": "fail2ban_cursor",
-        "server_key": "local",
-        "cursor": {"offset": 456},
-    }
+@pytest.mark.parametrize("kind", ["fail2ban_daily_digest", "tls_certificate_critical"])
+async def test_old_monitoring_notifications_are_retired_without_delivery(isolated_storage, kind):
+    event = storage.make_outbox_event(kind=kind, recipient_ids=[42], payload=outbox.message_payload("expired"))
     await storage.update_important_data(lambda cfg: storage.enqueue_important_outbox(cfg, event))
-
-    await outbox.process_outbox(_PartiallyReachableBot())
-
-    assert storage.get_fail2ban_cursor("local")["offset"] == 456
-    assert storage.outbox_snapshot() == []
+    bot = _RecordingBot()
+    await outbox.process_outbox(bot)
+    assert not bot.messages
+    assert not storage.outbox_snapshot()
 
 
 @pytest.mark.asyncio

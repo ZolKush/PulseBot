@@ -18,12 +18,10 @@ from .normalization import (
     SERVICE_TIERS,
     normalize_audit_log,
     normalize_bool,
-    normalize_docker_status,
     normalize_outbox,
     normalize_product_settings,
     normalize_review_messages,
     normalize_service_requests,
-    normalize_tls_certificates,
     optional_int,
     optional_text,
 )
@@ -180,28 +178,14 @@ class ImportantData:
     tickets: dict[str, Any] = field(default_factory=dict)
     maintenance: dict[str, Any] = field(default_factory=dict)
     scheduled_maintenance: dict[str, Any] = field(default_factory=dict)
-    dns_status: dict[str, Any] = field(default_factory=dict)
-    daily_node_status: dict[str, Any] = field(default_factory=dict)
     outbox: dict[str, dict[str, Any]] = field(default_factory=dict)
-    fail2ban_cursors: dict[str, dict[str, Any]] = field(default_factory=dict)
-    tls_certificates: dict[str, dict[str, Any]] = field(default_factory=dict)
-    docker_status: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def normalize(self) -> None:
         self.tickets_seq = max(0, int(self.tickets_seq or 0))
         self.tickets = copy_mapping(self.tickets)
         self.maintenance = copy_mapping(self.maintenance)
         self.scheduled_maintenance = copy_mapping(self.scheduled_maintenance)
-        self.dns_status = copy_mapping(self.dns_status)
-        self.daily_node_status = copy_mapping(self.daily_node_status)
         self.outbox = normalize_outbox(self.outbox)
-        self.fail2ban_cursors = {
-            str(key): dict(value)
-            for key, value in copy_mapping(self.fail2ban_cursors).items()
-            if isinstance(value, dict)
-        }
-        self.tls_certificates = normalize_tls_certificates(self.tls_certificates)
-        self.docker_status = normalize_docker_status(self.docker_status)
 
 
 def copy_mapping(value: Any) -> dict[str, Any]:

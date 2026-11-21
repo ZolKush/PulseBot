@@ -239,124 +239,6 @@ def normalize_outbox(raw: Any) -> dict[str, dict[str, Any]]:
     return normalized
 
 
-def normalize_tls_certificates(raw: Any) -> dict[str, dict[str, Any]]:
-    if not isinstance(raw, dict):
-        return {}
-    result: dict[str, dict[str, Any]] = {}
-    for raw_item in raw.values():
-        if not isinstance(raw_item, dict):
-            continue
-        domain = str(raw_item.get("domain") or "").strip().lower().rstrip(".")[:253]
-        if not domain:
-            continue
-        try:
-            primary_port = int(raw_item.get("primary_port", raw_item.get("port", 443)) or 443)
-        except (TypeError, ValueError, OverflowError):
-            primary_port = 443
-        if not 1 <= primary_port <= 65535:
-            primary_port = 443
-        try:
-            effective_port = int(raw_item.get("effective_port", raw_item.get("port", primary_port)) or primary_port)
-        except (TypeError, ValueError, OverflowError):
-            effective_port = primary_port
-        if not 1 <= effective_port <= 65535:
-            effective_port = primary_port
-        fallback_ports: list[int] = []
-        raw_fallback_ports = raw_item.get("fallback_ports")
-        if isinstance(raw_fallback_ports, list):
-            for raw_port in raw_fallback_ports[:20]:
-                try:
-                    fallback_port = int(raw_port)
-                except (TypeError, ValueError, OverflowError):
-                    continue
-                if 1 <= fallback_port <= 65535 and fallback_port != primary_port:
-                    fallback_ports.append(fallback_port)
-        raw_attempt_errors = raw_item.get("attempt_errors")
-        attempt_errors = (
-            [str(item)[:1000] for item in raw_attempt_errors[:20] if str(item or "").strip()]
-            if isinstance(raw_attempt_errors, list)
-            else []
-        )
-        status = {"valid": "ok", "unavailable": "error"}.get(
-            str(raw_item.get("status") or "unknown"),
-            str(raw_item.get("status") or "unknown"),
-        )
-        if status not in {"ok", "expiring", "expired", "invalid", "error", "unknown"}:
-            status = "unknown"
-        servers = raw_item.get("servers")
-        clean_servers = (
-            [str(item).strip()[:64] for item in servers if str(item or "").strip()][:100]
-            if isinstance(servers, list)
-            else []
-        )
-        notified = raw_item.get("notified_levels")
-        levels = (
-            [str(item) for item in notified if str(item) in {"expiring", "expired"}]
-            if isinstance(notified, list)
-            else []
-        )
-        try:
-            remaining = int(raw_item.get("remaining_seconds", 0) or 0)
-        except (TypeError, ValueError, OverflowError):
-            remaining = 0
-        result[f"{domain}:{primary_port}"] = {
-            "domain": domain,
-            # ``port`` remains the effective endpoint for backwards-compatible
-            # views, while identity is always anchored to the configured primary.
-            "port": effective_port,
-            "primary_port": primary_port,
-            "fallback_ports": list(dict.fromkeys(fallback_ports)),
-            "effective_port": effective_port,
-            "servers": list(dict.fromkeys(clean_servers)),
-            "status": status,
-            "checked_at": optional_text(raw_item.get("checked_at"), limit=80),
-            "not_before": optional_text(raw_item.get("not_before"), limit=80),
-            "not_after": optional_text(raw_item.get("not_after"), limit=80),
-            "fingerprint": optional_text(raw_item.get("fingerprint"), limit=128),
-            "issuer": optional_text(raw_item.get("issuer"), limit=500),
-            "error": optional_text(raw_item.get("error"), limit=1000),
-            "last_attempt_at": optional_text(raw_item.get("last_attempt_at"), limit=80),
-            "last_success_at": optional_text(raw_item.get("last_success_at"), limit=80),
-            "used_fallback": bool(raw_item.get("used_fallback", effective_port != primary_port)),
-            "attempt_errors": attempt_errors,
-            "hostname_valid": bool(raw_item.get("hostname_valid", False)),
-            "trust_valid": bool(raw_item.get("trust_valid", False)),
-            "remaining_seconds": remaining,
-            "notified_fingerprint": optional_text(raw_item.get("notified_fingerprint"), limit=128),
-            "notified_levels": list(dict.fromkeys(levels)),
-        }
-    return result
-
-
-def normalize_docker_status(raw: Any) -> dict[str, dict[str, Any]]:
-    if not isinstance(raw, dict):
-        return {}
-    result: dict[str, dict[str, Any]] = {}
-    for raw_server_key, raw_item in raw.items():
-        server_key = str(raw_server_key or "").strip()[:80]
-        if not server_key or not isinstance(raw_item, dict):
-            continue
-        containers: list[list[Any]] = []
-        raw_containers = raw_item.get("containers")
-        if isinstance(raw_containers, list):
-            for raw_container in raw_containers[:1000]:
-                if not isinstance(raw_container, (list, tuple)) or len(raw_container) < 3:
-                    continue
-                name = optional_text(raw_container[0], limit=160)
-                if not name:
-                    continue
-                status_text = optional_text(raw_container[2], limit=1000) or "н/д"
-                restarts = optional_text(raw_container[3], limit=80) if len(raw_container) >= 4 else None
-                containers.append([name, bool(raw_container[1]), status_text, restarts or "-"])
-        result[server_key] = {
-            "updated_at": optional_text(raw_item.get("updated_at"), limit=80),
-            "containers": containers,
-        }
-        if "_config_fingerprint" in raw_item:
-            result[server_key]["_config_fingerprint"] = optional_text(raw_item["_config_fingerprint"], limit=64)
-    return result
-
-
 __all__ = [
     "ACCESS_STATES",
     "ADMIN_LEVELS",
@@ -366,12 +248,10 @@ __all__ = [
     "SERVICE_TIERS",
     "normalize_audit_log",
     "normalize_bool",
-    "normalize_docker_status",
     "normalize_outbox",
     "normalize_product_settings",
     "normalize_review_messages",
     "normalize_service_requests",
-    "normalize_tls_certificates",
     "optional_int",
     "optional_text",
 ]

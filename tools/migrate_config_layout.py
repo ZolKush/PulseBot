@@ -1,11 +1,10 @@
-"""Migrate the current dotenv + TOML configuration into ``data/conf`` JSON files."""
+"""Convert a previous bot.json or public dotenv to the Zabbix-based configuration."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import re
 import shutil
 import sys
 import uuid
@@ -15,14 +14,9 @@ from typing import Any, TextIO
 
 from dotenv.parser import parse_stream
 
-if sys.version_info >= (3, 11):  # pragma: no branch
-    import tomllib
-else:  # pragma: no cover - Python 3.10 only
-    import tomli as tomllib
-
-_SERVER_KEY = re.compile(r"^[a-z0-9_-]{1,12}$")
 _SECRET_KEYS = {
     "BOT_TOKEN",
+    "ZABBIX_API_TOKEN",
     "ADMIN_PASSWORD",
     "OWNER_PASSWORD",
     "REMNAWAVE_METRICS_USER",
@@ -30,6 +24,23 @@ _SECRET_KEYS = {
 }
 _DISCARDED_KEYS = {
     "SERVER_INVENTORY_FILE",
+    "DNS_RESOLVERS",
+    "DNS_DAILY_REFRESH_AT",
+    "DNS_STARTUP_REFRESH_DELAY_SEC",
+    "FAIL2BAN_DAILY_AT",
+    "FAIL2BAN_DIGEST_TAIL_LINES",
+    "FAIL2BAN_DIGEST_MAX_BYTES",
+    "SUBPROC_SHORT_TIMEOUT",
+    "SUBPROC_MEDIUM_TIMEOUT",
+    "SUBPROC_MAX_OUTPUT_BYTES",
+    "PRIVILEGED_HELPER_BIN",
+    "STATUS_CACHE_TTL_SEC",
+    "REMNAWAVE_METRICS_URL",
+    "REMNAWAVE_METRICS_TIMEOUT_SEC",
+    "REMNAWAVE_METRICS_CACHE_TTL_SEC",
+    "REMNAWAVE_METRICS_MAX_BYTES",
+    "REMNAWAVE_HIDDEN_UUIDS",
+    "DAILY_NODE_STATUS_REFRESH_AT",
     "SSH_IDENTITY_FILE",
     "SSH_KNOWN_HOSTS_FILE",
     "SSH_STRICT_HOST_KEY_CHECKING",
@@ -134,64 +145,6 @@ def build_bot_document(env: dict[str, str], template: dict[str, Any]) -> dict[st
     return result
 
 
-def load_toml_servers(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
-        raise ConfigMigrationError(f"server inventory is not a regular file: {path}")
-    try:
-        with path.open("rb") as stream:
-            raw = tomllib.load(stream)
-    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
-        raise ConfigMigrationError(f"cannot read server inventory {path}: {exc}") from exc
-    if (
-        not isinstance(raw, dict)
-        or set(raw) != {"version", "servers"}
-        or type(raw.get("version")) is not int
-        or raw["version"] != 1
-    ):
-        raise ConfigMigrationError("server inventory must contain exactly version=1 and servers")
-    raw_servers = raw.get("servers")
-    if not isinstance(raw_servers, dict) or not raw_servers:
-        raise ConfigMigrationError("server inventory contains no servers")
-
-    result: list[dict[str, Any]] = []
-    local_count = 0
-    for index, (raw_key, raw_server) in enumerate(raw_servers.items(), start=1):
-        key = str(raw_key)
-        if not _SERVER_KEY.fullmatch(key):
-            raise ConfigMigrationError(f"server inventory contains invalid key: {key}")
-        if not isinstance(raw_server, dict):
-            raise ConfigMigrationError(f"server inventory entry is not an object: {key}")
-        if {"key", "version"} & raw_server.keys():
-            raise ConfigMigrationError(f"server entry must not override key or version: {key}")
-        document = {"version": 1, "key": key, **raw_server}
-        document.setdefault("display_order", index * 10)
-        connection = document.get("connection")
-        if isinstance(connection, dict):
-            connection.pop("target", None)
-            if connection.get("transport") == "ssh":
-                monitoring = document.get("monitoring", {})
-                if (
-                    not isinstance(monitoring, dict)
-                    or monitoring.get("source") != "remnawave"
-                    or not monitoring.get("node_uuid")
-                ):
-                    raise ConfigMigrationError(
-                        f"SSH monitoring was removed; configure a RemnaWave node before migrating server: {key}"
-                    )
-                connection["transport"] = "panel"
-                document["docker"] = {"containers": []}
-                fail2ban = document.get("fail2ban", {})
-                if not isinstance(fail2ban, dict):
-                    raise ConfigMigrationError(f"server inventory contains an invalid fail2ban block: {key}")
-                document["fail2ban"] = {**fail2ban, "enabled": False}
-            if connection.get("transport") == "local":
-                local_count += 1
-        result.append(document)
-    if local_count > 1:
-        raise ConfigMigrationError("server inventory contains more than one local server")
-    return result
-
-
 def _encode(document: dict[str, Any]) -> bytes:
     try:
         return (json.dumps(document, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8")
@@ -222,26 +175,15 @@ def _sync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def write_layout(output_dir: Path, bot: dict[str, Any], servers: list[dict[str, Any]]) -> None:
+def write_layout(output_dir: Path, bot: dict[str, Any]) -> None:
     if output_dir.exists():
         raise ConfigMigrationError(f"refusing to overwrite existing output: {output_dir}")
-    keys = [document.get("key") for document in servers]
-    if not keys or any(not isinstance(key, str) or not _SERVER_KEY.fullmatch(key) for key in keys):
-        raise ConfigMigrationError("server documents contain invalid keys")
-    if len(set(keys)) != len(keys):
-        raise ConfigMigrationError("server documents contain duplicate keys")
-    encoded_bot, encoded_servers = _encode(bot), [_encode(document) for document in servers]
+    encoded_bot = _encode(bot)
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     temporary = output_dir.parent / f".{output_dir.name}.{uuid.uuid4().hex}.tmp"
     try:
         temporary.mkdir(mode=0o700)
-        server_dir = temporary / "servers"
-        server_dir.mkdir(mode=0o700)
         _write_private(temporary / "bot.json", encoded_bot)
-        for index, (document, payload) in enumerate(zip(servers, encoded_servers, strict=True), start=1):
-            filename = f"{index * 10:03d}-{document['key']}.json"
-            _write_private(server_dir / filename, payload)
-        _sync_directory(server_dir)
         _sync_directory(temporary)
         temporary.replace(output_dir)
         _sync_directory(output_dir.parent)
@@ -252,34 +194,50 @@ def write_layout(output_dir: Path, bot: dict[str, Any], servers: list[dict[str, 
         raise
 
 
-def migrate(*, env_path: Path, inventory_path: Path, template_path: Path, output_dir: Path) -> int:
-    env = _load_env(env_path)
+def migrate(
+    *, env_path: Path | None, bot_path: Path | None, template_path: Path, output_dir: Path, zabbix_api_url: str
+) -> None:
     template = _load_json_object(template_path, source="bot template")
-    bot = build_bot_document(env, template)
-    servers = load_toml_servers(inventory_path)
-    write_layout(output_dir, bot, servers)
-    return len(servers)
+    if bot_path is not None and env_path is not None:
+        raise ConfigMigrationError("select exactly one source: --bot-json or --env")
+    if bot_path is not None:
+        original = _load_json_object(bot_path, source="bot configuration")
+        if type(original.get("version")) is not int or original["version"] != 1:
+            raise ConfigMigrationError("bot configuration must have version=1")
+        unknown = set(original) - set(template) - _DISCARDED_KEYS
+        if unknown:
+            raise ConfigMigrationError("bot configuration contains unknown keys: " + ", ".join(sorted(unknown)))
+        bot = {**template, **{key: value for key, value in original.items() if key in template}}
+    else:
+        if env_path is None:
+            raise ConfigMigrationError("public env path is required")
+        bot = build_bot_document(_load_env(env_path), template)
+    bot["ZABBIX_API_URL"] = zabbix_api_url
+    write_layout(output_dir, bot)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env", type=Path, default=Path("app/.env"))
-    parser.add_argument("--inventory", type=Path, default=Path("app/servers.toml"))
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--env", type=Path)
+    source.add_argument("--bot-json", type=Path)
+    parser.add_argument("--zabbix-api-url", required=True)
     parser.add_argument("--template", type=Path, default=Path("examples/conf/bot.json"))
-    parser.add_argument("--output-dir", type=Path, default=Path("data/conf"))
+    parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     try:
-        count = migrate(
+        migrate(
             env_path=args.env,
-            inventory_path=args.inventory,
+            bot_path=args.bot_json,
             template_path=args.template,
             output_dir=args.output_dir,
+            zabbix_api_url=args.zabbix_api_url,
         )
     except (ConfigMigrationError, OSError) as exc:
         print(f"Ошибка миграции конфигурации: {' '.join(str(exc).split())}", file=sys.stderr)
         return 1
-    print(f"Created {args.output_dir / 'bot.json'} and {count} server JSON files.")
-    print("Run app.config_check before starting MaintBot; the source files were not modified.")
+    print(f"Created {args.output_dir / 'bot.json'}.")
+    print("Configure ZABBIX_API_TOKEN in your secret env and run app.config_check before starting MaintBot.")
     return 0
 
 

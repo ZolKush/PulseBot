@@ -22,7 +22,6 @@ def _resolve_bootstrap_path(value: str, default: Path) -> Path:
 # not need one environment variable per setting or per server.
 CONFIG_DIR = _resolve_bootstrap_path(os.getenv("MAINTBOT_CONFIG_DIR", ""), ROOT_DIR / "data" / "conf")
 BOT_CONFIG_FILE = CONFIG_DIR / "bot.json"
-SERVER_CONFIG_DIR = CONFIG_DIR / "servers"
 
 _SECRETS_ENV_PATH = os.getenv("SECRETS_ENV_PATH", "").strip()
 SECRETS_ENV_FILE = _resolve_bootstrap_path(_SECRETS_ENV_PATH, BASE_DIR / "env.secrets")
@@ -33,5 +32,4 @@ __all__ = [
     "CONFIG_DIR",
     "ROOT_DIR",
     "SECRETS_ENV_FILE",
-    "SERVER_CONFIG_DIR",
 ]

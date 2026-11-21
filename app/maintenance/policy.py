@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 from collections.abc import Mapping
 from typing import Any
 
 from ..bot.ui import clip_text, html_escape
-from ..config import SERVERS, server_monitoring_fingerprint
+from ..config import ZABBIX_API_TOKEN, ZABBIX_API_URL
+from ..monitoring.zabbix import ZabbixClient, ZabbixError
+
+SERVER_KEY_PATTERN = r"z[1-9][0-9]{0,19}"
 
 MAINT_SCOPE_ALL = "all"
 MAX_MAINT_HOURS = 72
@@ -28,8 +33,11 @@ def due_thresholds(notified: list[int], remaining_min: int) -> list[int]:
     ]
 
 
-def server_items() -> list[tuple[str, str]]:
-    return [(key, value.label) for key, value in SERVERS.items()]
+async def server_items() -> dict[str, str]:
+    hosts = await ZabbixClient(ZABBIX_API_URL, ZABBIX_API_TOKEN).hosts()
+    if not hosts:
+        raise ZabbixError("No monitored hosts visible in Zabbix")
+    return {f"z{host.id}": host.name for host in hosts}
 
 
 def normalize_scope(scope: str | None) -> str:
@@ -38,33 +46,25 @@ def normalize_scope(scope: str | None) -> str:
 
 
 def scope_fingerprint(scope: str) -> str:
-    server = SERVERS.get(normalize_scope(scope))
-    return server_monitoring_fingerprint(server) if server else ""
+    if scope == MAINT_SCOPE_ALL:
+        return ""
+    return hashlib.sha256(f"{ZABBIX_API_URL}/{scope}".encode()).hexdigest()
 
 
 def scope_is_current(record: Mapping[str, Any]) -> bool:
     scope = normalize_scope(str(record.get("scope") or ""))
     if scope == MAINT_SCOPE_ALL:
         return True
-    if scope not in SERVERS:
-        return False
-    fingerprint = record.get("scope_fingerprint")
-    return not fingerprint or fingerprint == scope_fingerprint(scope)
+    return bool(re.fullmatch(SERVER_KEY_PATTERN, scope)) and record.get("scope_fingerprint") == scope_fingerprint(scope)
 
 
-def scope_label(scope: str | None) -> str:
-    normalized = normalize_scope(scope)
-    if normalized == MAINT_SCOPE_ALL:
-        labels = [label for _, label in server_items()]
-        return clip_text(", ".join(labels), limit=400) if labels else "Все серверы"
-    server = SERVERS.get(normalized)
-    return server.label if server else f"{normalized} (сервер удалён из конфигурации)"
+def scope_label(scope: str | None, label: str = "") -> str:
+    return "Все серверы" if normalize_scope(scope) == MAINT_SCOPE_ALL else clip_text(label or str(scope), limit=120)
 
 
-def scope_line(scope: str | None) -> str:
-    normalized = normalize_scope(scope)
-    prefix = "Серверы" if normalized == MAINT_SCOPE_ALL else "Сервер"
-    return f"• {prefix}: <b>{html_escape(scope_label(normalized))}</b>"
+def scope_line(scope: str | None, label: str = "") -> str:
+    prefix = "Серверы" if normalize_scope(scope) == MAINT_SCOPE_ALL else "Сервер"
+    return f"• {prefix}: <b>{html_escape(scope_label(scope, label))}</b>"
 
 
 def maint_heading(urgency: object, status: str) -> str:

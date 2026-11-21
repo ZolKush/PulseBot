@@ -144,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         from app import config
 
-        secrets = (config.BOT_TOKEN, config.ADMIN_PASSWORD, config.OWNER_PASSWORD, config.REMNAWAVE_METRICS_PASS)
+        secrets = (config.BOT_TOKEN, config.ADMIN_PASSWORD, config.OWNER_PASSWORD, config.ZABBIX_API_TOKEN)
         emit = Reporter(None, secrets)
         configure_logging(level=config.LOG_LEVEL, use_json=config.LOG_JSON, force=True, secrets=secrets)
         with SingleInstanceLock(config.INSTANCE_LOCK_PATH), ExitStack() as stack:

@@ -200,12 +200,6 @@ class StorageFacade:
             return None
         return staff_public_signature(meta)
 
-    def cache_item(self, field: str, server_key: str) -> dict[str, Any] | None:
-        with self._publish_lock:
-            value = getattr(self._important, field)
-            item = value.get(str(server_key)) if isinstance(value, dict) else None
-            return copy.deepcopy(item) if isinstance(item, dict) else None
-
     def outbox_event(self, source: str, event_id: str) -> dict[str, Any] | None:
         if source not in {"user", "important"}:
             raise ValueError(f"unknown outbox source: {source}")
@@ -270,27 +264,6 @@ class StorageFacade:
             return await self.update_important_data(apply)
         except UpdateAborted:
             return None
-
-    async def finalize_outbox(self, source: str, event_id: str, *, success: bool) -> None:
-        if source == "user":
-            await self.update_user_data(lambda aggregate: aggregate.outbox.pop(event_id, None))
-            return
-        if source != "important":
-            raise ValueError(f"unknown outbox source: {source}")
-
-        def finish(aggregate: ImportantData) -> None:
-            event = aggregate.outbox.get(event_id)
-            if not isinstance(event, dict):
-                return
-            completion = event.get("completion")
-            if success and isinstance(completion, dict) and completion.get("type") == "fail2ban_cursor":
-                server_key = str(completion.get("server_key") or "")
-                cursor = completion.get("cursor")
-                if server_key and isinstance(cursor, dict):
-                    aggregate.fail2ban_cursors[server_key] = copy.deepcopy(cursor)
-            aggregate.outbox.pop(event_id, None)
-
-        await self.update_important_data(finish)
 
     def _require_backend(self) -> SQLiteBackend:
         if self._backend is None:

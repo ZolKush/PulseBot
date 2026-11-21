@@ -15,20 +15,15 @@ from telegram.ext import (
 )
 
 from ..config import (
-    BOT_MODE,
     BOT_TOKEN,
     DATA_DIR,
     INSTANCE_LOCK_PATH,
     NAVIGATION_CLEANUP_ENABLED,
     NAVIGATION_RETENTION_HOURS,
-    SERVER_KEY_PATTERN,
-    SERVERS,
     logger,
 )
 from ..messaging.message_cleanup import MessageCleanupStats, MessageTracker, TrackingExtBot
 from ..messaging.review_navigation import retire_review_card_for_navigation
-from ..monitoring.remnawave.client import close_metrics_client
-from ..monitoring.status.reconciliation import reconcile_configured_servers
 from ..persistence.sqlite_schema import DATABASE_FILENAME
 from ..runtime.lock import ALREADY_RUNNING_EXIT_CODE, InstanceAlreadyRunning, SingleInstanceLock
 from ..subscriptions.requests.flow_cleanup import abandon_product_flow
@@ -62,11 +57,7 @@ def _log_message_cleanup(stats: MessageCleanupStats, *, reason: str) -> None:
         )
 
 
-async def _post_shutdown(_application: Application) -> None:
-    await close_metrics_client()
-
-
-def build_application(*, bot_mode: str = BOT_MODE) -> Application:
+def build_application() -> Application:
     """Build the complete PTB application without starting network polling."""
     if not BOT_TOKEN:
         raise RuntimeError("Не задан BOT_TOKEN в app/env.secrets или переменных окружения")
@@ -79,23 +70,6 @@ def build_application(*, bot_mode: str = BOT_MODE) -> Application:
 
     async def post_init(application: Application) -> None:
         message_tracker.bind(application.bot_data)
-        try:
-            removed = await reconcile_configured_servers(SERVERS)
-        except Exception:
-            logger.exception(
-                "Could not reconcile monitoring cache with configured servers",
-                extra={"action": "monitoring_cache_reconcile_failed"},
-            )
-            raise
-        else:
-            total_removed = sum(removed.values())
-            if total_removed:
-                logger.info(
-                    "Removed %s stale monitoring cache records: %s",
-                    total_removed,
-                    removed,
-                    extra={"action": "monitoring_cache_reconciled", "total": total_removed},
-                )
         if not NAVIGATION_CLEANUP_ENABLED:
             return
         try:
@@ -125,22 +99,14 @@ def build_application(*, bot_mode: str = BOT_MODE) -> Application:
         .job_queue(ManagedJobQueue())
         .persistence(build_sqlite_persistence(Path(DATA_DIR) / DATABASE_FILENAME))
         .post_init(post_init)
-        .post_shutdown(_post_shutdown)
         .build()
     )
 
     # Exact easter eggs precede conversations so an active text-input state
     # cannot reinterpret the trigger as business data.
     application.add_handler(MessageHandler(RANEPA_TEXT, ranepa_easter_egg))
-    conversations = register_routes(
-        application,
-        server_key_pattern=SERVER_KEY_PATTERN,
-    )
-    register_jobs(
-        application,
-        bot_mode=bot_mode,
-        message_cleanup_job=message_cleanup_job,
-    )
+    conversations = register_routes(application)
+    register_jobs(application, message_cleanup_job=message_cleanup_job)
 
     navigation_callbacks = [handler for handler in application.handlers[0] if isinstance(handler, CallbackQueryHandler)]
 
@@ -175,7 +141,7 @@ def build_application(*, bot_mode: str = BOT_MODE) -> Application:
     return application
 
 
-def run_application(*, instance_lock: SingleInstanceLock | None = None, bot_mode: str = BOT_MODE) -> None:
+def run_application(*, instance_lock: SingleInstanceLock | None = None) -> None:
     """Build and poll while respecting the process-wide single-instance lock."""
     lock = instance_lock or SingleInstanceLock(INSTANCE_LOCK_PATH)
     owns_lock = instance_lock is None
@@ -186,7 +152,7 @@ def run_application(*, instance_lock: SingleInstanceLock | None = None, bot_mode
             logger.warning("MaintBot не запущен: %s", exc)
             raise SystemExit(ALREADY_RUNNING_EXIT_CODE) from exc
     try:
-        application = build_application(bot_mode=bot_mode)
+        application = build_application()
         logger.info("Bot started", extra={"action": "startup"})
         application.run_polling(drop_pending_updates=False)
     finally:

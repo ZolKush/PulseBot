@@ -26,7 +26,7 @@ RestartPreventExitStatus=75
 SuccessExitStatus=75
 RestartSec=5
 TimeoutStartSec=30
-# Allow callback cancellation, subprocess reap and final durable writes.
+# Allow callback cancellation, final durable writes.
 TimeoutStopSec=90
 KillMode=control-group
 
@@ -38,6 +38,7 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
+NoNewPrivileges=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
@@ -47,7 +48,7 @@ ProtectHostname=true
 LockPersonality=true
 RestrictRealtime=true
 RestrictNamespaces=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
 ReadWritePaths=/opt/maintbot/data
 ReadOnlyPaths=-/opt/maintbot/data/conf

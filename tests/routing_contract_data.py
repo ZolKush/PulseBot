@@ -54,7 +54,7 @@ CONVERSATION_ROUTES = {
         ),
         "state_routes": {
             0: (r"callback:^maint:mode:(announce|schedule)$",),
-            1: (r"callback:^maint:scope:[a-z0-9_-]{1,12}$",),
+            1: (r"callback:^maint:scope:(?:all|z[1-9][0-9]{0,19})$", r"callback:^maint:scope:page:[0-9]{1,9}$"),
             2: (r"callback:^maint:urgency:(urgent|planned)$",),
             3: ("message",),
             4: ("message",),

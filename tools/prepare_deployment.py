@@ -30,8 +30,6 @@ _IMAGE_REFERENCE = re.compile(
 class DeploymentReport:
     output_dir: str
     source_format: str
-    server_count: int
-    omitted_host_servers: int
     telegram_state_present: bool
     original_config_backup: str
 
@@ -147,7 +145,6 @@ def prepare_deployment(
     project_dir: Path,
     output_dir: Path,
     *,
-    panel_only: bool = False,
     config_dir: Path | None = None,
     secrets_file: Path | None = None,
     ptb_pickle: Path | None = None,
@@ -171,9 +168,7 @@ def prepare_deployment(
     if not secret.is_file() or _is_link(secret) or secret.stat().st_size == 0:
         raise DeploymentPreparationError("a nonempty existing secrets file is required")
     compose = _compose_document(project, image)
-    bot, servers, omitted = docker_configuration(
-        config, template=project / "examples/conf/docker-bot.json", panel_only=panel_only
-    )
+    bot = docker_configuration(config, template=project / "examples/conf/docker-bot.json")
     pickle_path = _select_pickle(project, config, ptb_pickle) if source_format != "sqlite-v1" else None
     checksums = {path.relative_to(data): _digest(path) for path in source_files}
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -196,11 +191,7 @@ def prepare_deployment(
         if target_config.exists():
             shutil.rmtree(target_config)
         target_config.mkdir(mode=0o700)
-        server_dir = target_config / "servers"
-        server_dir.mkdir(mode=0o700)
         write_object(target_config / "bot.json", bot)
-        for name, document in servers.items():
-            write_object(server_dir / name, document)
         shutil.copyfile(secret, copied / "env.secrets")
         (copied / "env.secrets").chmod(0o600)
         if pickle_path is not None:
@@ -214,14 +205,13 @@ def prepare_deployment(
         if temporary.exists():
             shutil.rmtree(temporary)
         raise
-    return DeploymentReport(str(output), source_format, len(servers), omitted, pickle_path is not None, backup.name)
+    return DeploymentReport(str(output), source_format, pickle_path is not None, backup.name)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-dir", type=Path, default=Path.cwd())
     parser.add_argument("--output", type=Path, default=Path("release"))
-    parser.add_argument("--panel-only", action="store_true")
     parser.add_argument("--config-dir", type=Path)
     parser.add_argument("--secrets-file", type=Path)
     parser.add_argument("--ptb-pickle", type=Path)
@@ -231,7 +221,6 @@ def main() -> int:
         report = prepare_deployment(
             args.project_dir,
             args.output,
-            panel_only=args.panel_only,
             config_dir=args.config_dir,
             secrets_file=args.secrets_file,
             ptb_pickle=args.ptb_pickle,

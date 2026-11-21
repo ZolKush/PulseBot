@@ -28,16 +28,8 @@ def _project(tmp_path: Path) -> Path:
     bot.update(
         DATA_DIR="/opt/old/data",
         PTB_PERSISTENCE_PATH="/opt/old/data/telegram/persistence.pickle",
-        SSH_IDENTITY_FILE="/old/key",
-        SSH_KNOWN_HOSTS_FILE="/old/known_hosts",
-        SSH_STRICT_HOST_KEY_CHECKING="yes",
     )
     _json(data / "conf/bot.json", bot)
-    server = json.loads((ROOT / "examples/conf/docker-server.json").read_text(encoding="utf-8"))
-    server["connection"] = {"transport": "ssh", "target": "maintbot@example.com"}
-    server["docker"] = {"containers": ["api"]}
-    server["fail2ban"]["enabled"] = True
-    _json(data / "conf/servers/remote.json", server)
     _json(
         data / "conf/servers/local.json",
         {"version": 1, "key": "local", "label": "Local", "connection": {"transport": "local"}},
@@ -67,12 +59,10 @@ def test_bundle_copies_all_state_and_adapts_only_copied_config(tmp_path: Path) -
     before = _files(project)
     output = tmp_path / "release"
 
-    report = prepare_deployment(project, output, panel_only=True)
+    report = prepare_deployment(project, output)
 
     assert _files(project) == before
     assert report.source_format == "split-json-v1"
-    assert report.server_count == 1
-    assert report.omitted_host_servers == 1
     assert report.telegram_state_present
     assert sorted(path.name for path in output.iterdir()) == ["compose.yaml", "data"]
     assert (output / "compose.yaml").read_bytes() == (project / "deploy/compose.remote.yaml").read_bytes()
@@ -87,13 +77,8 @@ def test_bundle_copies_all_state_and_adapts_only_copied_config(tmp_path: Path) -
     assert bot["INSTANCE_LOCK_PATH"] == bot["PTB_PERSISTENCE_PATH"] == ""
     assert not any(key.startswith("SSH_") for key in bot)
     assert bot["TZ"] == "Europe/Moscow"
-    server = json.loads((output / "data/conf/servers/remote.json").read_text(encoding="utf-8"))
-    assert server["key"] == "panel"
-    assert server["monitoring"]["node_uuid"] == "00000000-0000-0000-0000-000000000001"
-    assert server["connection"] == {"transport": "panel"}
-    assert server["docker"] == {"containers": []}
-    assert server["fail2ban"]["enabled"] is False
-    assert not (output / "data/conf/servers/local.json").exists()
+    assert bot["ZABBIX_API_URL"] == "https://zabbix.example.org/api_jsonrpc.php"
+    assert not (output / "data/conf/servers").exists()
     backup = output / "data" / report.original_config_backup
     assert (backup / "bot.json").read_bytes() == (project / "data/conf/bot.json").read_bytes()
     assert (backup / "servers/local.json").is_file()
@@ -108,7 +93,7 @@ def test_loaded_image_bundle_pins_the_image_without_remote_build_or_pull(tmp_pat
     before = _files(project)
     output = tmp_path / "release"
 
-    report = prepare_deployment(project, output, panel_only=True, image=image)
+    report = prepare_deployment(project, output, image=image)
 
     assert _files(project) == before
     assert report.source_format == "split-json-v1"
@@ -148,7 +133,7 @@ def test_invalid_image_reference_is_refused_without_output_or_value_disclosure(t
     output = tmp_path / "release"
 
     with pytest.raises(DeploymentPreparationError, match="valid Docker image reference") as caught:
-        prepare_deployment(project, output, panel_only=True, image=image)
+        prepare_deployment(project, output, image=image)
 
     assert "PRIVATE" not in str(caught.value)
     assert _files(project) == before
@@ -167,7 +152,6 @@ def test_cli_image_option_selects_the_loaded_image_template(tmp_path: Path, monk
             str(project),
             "--output",
             str(output),
-            "--panel-only",
             "--image",
             "maintbot:fixed-test",
         ],
@@ -180,19 +164,15 @@ def test_cli_image_option_selects_the_loaded_image_template(tmp_path: Path, monk
     assert 'image: "maintbot:fixed-test"' in (output / "compose.yaml").read_text(encoding="utf-8")
 
 
-def test_host_only_omission_requires_explicit_flag(tmp_path: Path) -> None:
+def test_old_configuration_requires_explicit_migration(tmp_path: Path) -> None:
     project = _project(tmp_path)
-    output = tmp_path / "release"
-    with pytest.raises(DeploymentPreparationError, match="--panel-only"):
-        prepare_deployment(project, output)
-    assert not output.exists()
-
-
-def test_zero_panel_nodes_is_refused(tmp_path: Path) -> None:
-    project = _project(tmp_path)
-    (project / "data/conf/servers/remote.json").unlink()
-    with pytest.raises(DeploymentPreparationError, match="no configured RemnaWave"):
-        prepare_deployment(project, tmp_path / "release", panel_only=True)
+    path = project / "data/conf/bot.json"
+    bot = json.loads(path.read_bytes())
+    bot.pop("ZABBIX_API_URL")
+    bot["REMNAWAVE_METRICS_URL"] = "https://old.example"
+    _json(path, bot)
+    with pytest.raises(DeploymentPreparationError, match="migrate_config_layout"):
+        prepare_deployment(project, tmp_path / "release")
 
 
 @pytest.mark.parametrize("target", ["existing", "data", "data/nested"])
@@ -202,14 +182,14 @@ def test_refuses_existing_output_and_source_descendants(tmp_path: Path, target: 
     if target == "existing":
         output.mkdir()
     with pytest.raises(DeploymentPreparationError, match="refusing"):
-        prepare_deployment(project, output, panel_only=True)
+        prepare_deployment(project, output)
 
 
 def test_missing_split_manifest_is_not_treated_as_empty_installation(tmp_path: Path) -> None:
     project = _project(tmp_path)
     (project / "data/storage_layout.json").unlink()
     with pytest.raises(DeploymentPreparationError, match="storage_layout.json"):
-        prepare_deployment(project, tmp_path / "release", panel_only=True)
+        prepare_deployment(project, tmp_path / "release")
 
 
 def test_monolithic_source_is_refused_without_modification_or_output(tmp_path: Path) -> None:
@@ -222,7 +202,7 @@ def test_monolithic_source_is_refused_without_modification_or_output(tmp_path: P
     output = tmp_path / "release"
 
     with pytest.raises(DeploymentPreparationError, match="storage_layout.json"):
-        prepare_deployment(project, output, panel_only=True)
+        prepare_deployment(project, output)
 
     assert _files(project) == before
     assert not output.exists()
@@ -232,7 +212,7 @@ def test_explicit_custom_pickle_is_preserved_under_canonical_name(tmp_path: Path
     project = _project(tmp_path)
     selected = project / "app/custom-state.pickle"
     selected.write_bytes(b"selected-state")
-    report = prepare_deployment(project, tmp_path / "release", panel_only=True, ptb_pickle=selected)
+    report = prepare_deployment(project, tmp_path / "release", ptb_pickle=selected)
     assert report.telegram_state_present
     assert (tmp_path / "release/data/telegram-migration.pickle").read_bytes() == b"selected-state"
     assert selected.read_bytes() == b"selected-state"
@@ -242,18 +222,7 @@ def test_missing_configured_pickle_requires_explicit_resolution(tmp_path: Path) 
     project = _project(tmp_path)
     (project / "data/telegram/persistence.pickle").unlink()
     with pytest.raises(DeploymentPreparationError, match="configured Telegram state is absent"):
-        prepare_deployment(project, tmp_path / "release", panel_only=True)
-
-
-def test_bad_uuid_does_not_expose_configuration_values(tmp_path: Path) -> None:
-    project = _project(tmp_path)
-    path = project / "data/conf/servers/remote.json"
-    server = json.loads(path.read_text(encoding="utf-8"))
-    server["monitoring"]["node_uuid"] = "PRIVATE-UUID-VALUE"
-    _json(path, server)
-    with pytest.raises(DeploymentPreparationError) as caught:
-        prepare_deployment(project, tmp_path / "release", panel_only=True)
-    assert "PRIVATE-UUID-VALUE" not in str(caught.value)
+        prepare_deployment(project, tmp_path / "release")
 
 
 def test_source_directory_symlink_is_refused(tmp_path: Path) -> None:
@@ -264,4 +233,4 @@ def test_source_directory_symlink_is_refused(tmp_path: Path) -> None:
     except OSError:
         pytest.skip("directory symlinks require platform support")
     with pytest.raises(DeploymentPreparationError, match="symbolic links"):
-        prepare_deployment(project, tmp_path / "release", panel_only=True)
+        prepare_deployment(project, tmp_path / "release")

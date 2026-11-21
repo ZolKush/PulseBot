@@ -7,8 +7,6 @@ views may build on these primitives, but the primitives never import features.
 from __future__ import annotations
 
 import html
-import math
-import re
 from datetime import datetime
 from typing import Any
 
@@ -67,10 +65,6 @@ def wrap_as_codeblock_html(text: str, limit: int = 3300) -> str:
     return f"<pre><code>{clip_html(text, limit)}</code></pre>"
 
 
-def now_str() -> str:
-    return datetime.now(TZ).strftime("%d.%m.%Y %H:%M:%S")
-
-
 def format_dt_human(value: Any, *, empty: str = "-", tz_label: str = "по МСК") -> str:
     raw = str(value or "").strip()
     if not raw:
@@ -116,17 +110,6 @@ async def safe_edit_or_reply(
 # vertical spacing without showing a decorative rule.
 SEP = ""
 
-STATUS_EMOJI = {
-    "ok": "🟢",
-    "down": "🔴",
-    "degraded": "⚠️",
-}
-
-
-def status_emoji(state: str) -> str:
-    return STATUS_EMOJI.get((state or "").strip().lower(), STATUS_EMOJI["degraded"])
-
-
 URGENCY_LABELS = {
     "p1": "🔥 Критично",
     "p2": "⚠️ Важно",
@@ -143,66 +126,6 @@ def urgency_emoji(code: str | None) -> str:
     key = str(code or "").strip().lower()
     label = URGENCY_LABELS.get(key)
     return label.split()[0] if label else "📋"
-
-
-def progress_bar(percent: float, width: int = 10) -> str:
-    try:
-        value = float(percent)
-    except (TypeError, ValueError):
-        value = 0.0
-    value = max(0.0, min(100.0, value))
-    filled = round(width * value / 100.0)
-    return "▰" * filled + "▱" * (width - filled)
-
-
-_METRIC_LABEL_WIDTH = 5
-
-
-def metric_line(label: str, percent: float | None, detail: str = "") -> str:
-    if percent is None or not math.isfinite(percent):
-        suffix = f": {html_escape(detail)}" if detail else ""
-        return f"{html_escape(label)}{suffix}"
-    value = int(max(0, min(100, round(float(percent)))))
-    padded = str(label).ljust(_METRIC_LABEL_WIDTH)
-    line = f"<code>{html_escape(padded)}{progress_bar(value)}  {value:>3}%</code>"
-    if detail:
-        line += f"  ({html_escape(detail)})"
-    return line
-
-
-_PERCENT_RE = re.compile(r"(\d{1,3})\s*%")
-
-
-def extract_percent(text: str | None) -> int | None:
-    match = _PERCENT_RE.search(str(text or ""))
-    if not match:
-        return None
-    value = int(match.group(1))
-    return value if 0 <= value <= 100 else None
-
-
-def used_total_percent(used: float, total: float) -> int | None:
-    try:
-        used_value = float(used)
-        total_value = float(total)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(total_value) or not math.isfinite(used_value) or total_value <= 0 or used_value < 0:
-        return None
-    return int(max(0, min(100, round(used_value / total_value * 100))))
-
-
-def header(icon: str, title: str, status_text: str = "") -> str:
-    base = f"{icon} <b>{html_escape(title)}</b>".strip()
-    return f"{base} · {status_text}" if status_text else base
-
-
-def section(title: str, icon: str = "") -> str:
-    return f"{icon} <b>{html_escape(title)}</b>".strip()
-
-
-def footer_updated(dt_text: str) -> str:
-    return f"<i>обновлено {html_escape(dt_text)}</i>"
 
 
 def btn_back(callback_data: str, label: str = "⬅️ Назад") -> InlineKeyboardButton:

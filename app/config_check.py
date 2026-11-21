@@ -2,8 +2,7 @@
 
 Imports are deliberately deferred until a public wrapper is called.  This is
 important for the command-line entrypoint: importing :mod:`app.config` loads
-the runtime settings and server inventory, and either of those may be the very
-thing this command needs to report as invalid.
+the runtime settings that this command needs to validate.
 """
 
 from __future__ import annotations
@@ -55,7 +54,7 @@ def main() -> int:
     except Exception as exc:
         # Runtime configuration is imported while resolving ``config.checks``.
         # Keep this outer guard even though checks.main handles validation-time
-        # failures: inventory/settings errors can happen before it is callable.
+        # failures: settings errors can happen before it is callable.
         print(f"Ошибка конфигурации: {_safe_error_text(exc)}", file=sys.stderr)
         return 1
 

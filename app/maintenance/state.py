@@ -19,6 +19,8 @@ from telegram.ext import ContextTypes
 MAINTENANCE_CONTEXT_KEYS = (
     "maint_mode",
     "maint_scope",
+    "maint_scope_label",
+    "maint_scope_fingerprint",
     "maint_urgency",
     "maint_panel_chat_id",
     "maint_panel_msg_id",

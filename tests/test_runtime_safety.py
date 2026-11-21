@@ -5,22 +5,7 @@ from pydantic import ValidationError
 
 from app.config.schema import AppSettings
 from app.config.secrets import load_required_secrets
-from app.monitoring.system.ufw import _parse_ufw_status
 from app.runtime.lock import InstanceAlreadyRunning, SingleInstanceLock
-
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        ("Status: inactive", "inactive"),
-        ("Status: active", "active"),
-        ("Статус: неактивен", "inactive"),
-        ("Статус: активен", "active"),
-        ("permission denied", "н/д"),
-    ],
-)
-def test_ufw_status_does_not_confuse_inactive_with_active(raw: str, expected: str) -> None:
-    assert _parse_ufw_status(raw) == expected
 
 
 def test_legacy_positional_server_settings_are_rejected() -> None:
@@ -117,29 +102,10 @@ def test_secret_file_rejects_duplicates_syntax_errors_and_empty_unknown_keys(
         load_required_secrets(path)
 
 
-def test_remnawave_credentials_must_be_configured_as_a_pair(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    path = tmp_path / "secrets.env"
-    path.write_text(
-        "BOT_TOKEN=123456:test-token\n"
-        "ADMIN_PASSWORD=admin-password-long-enough\n"
-        "OWNER_PASSWORD=owner-password-long-enough\n"
-        "REMNAWAVE_METRICS_USER=metrics-user\n",
-        encoding="utf-8",
-    )
-    for key in (
-        "BOT_TOKEN",
-        "ADMIN_PASSWORD",
-        "OWNER_PASSWORD",
-        "REMNAWAVE_METRICS_USER",
-        "REMNAWAVE_METRICS_PASS",
-    ):
-        monkeypatch.delenv(key, raising=False)
-
-    with pytest.raises(RuntimeError, match="должны быть заданы вместе"):
-        load_required_secrets(path)
+def test_zabbix_token_is_required(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ZABBIX_API_TOKEN", raising=False)
+    with pytest.raises(RuntimeError, match="ZABBIX_API_TOKEN"):
+        load_required_secrets(tmp_path / "missing.env")
 
 
 def test_app_settings_validation_does_not_expose_dotenv_secrets() -> None:

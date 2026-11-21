@@ -16,8 +16,9 @@ from ..administration.flow_handlers import (
     administration_text_input,
 )
 from ..administration.state import ADMINISTRATION_CONFIRM, ADMINISTRATION_INPUT
-from ..maintenance.flow import maint_duration, maint_mode, maint_scope, maint_start, maint_urgency
+from ..maintenance.flow import maint_duration, maint_mode, maint_scope, maint_scope_page, maint_start, maint_urgency
 from ..maintenance.lifecycle import maint_extend_cb, maint_extend_duration
+from ..maintenance.policy import SERVER_KEY_PATTERN
 from ..maintenance.scheduling import maint_cal_day, maint_cal_nav, maint_cal_noop, maint_schedule_range
 from ..maintenance.state import (
     STATE_MAINT_DURATION,
@@ -169,7 +170,7 @@ def build_product_flow() -> NavigableConversationHandler:
     )
 
 
-def build_maintenance_flow(server_key_pattern: str) -> NavigableConversationHandler:
+def build_maintenance_flow() -> NavigableConversationHandler:
     return conversation_handler(
         entry_points=[
             CommandHandler("maint", maint_start),
@@ -178,7 +179,10 @@ def build_maintenance_flow(server_key_pattern: str) -> NavigableConversationHand
         ],
         states={
             STATE_MAINT_MODE: [CallbackQueryHandler(maint_mode, pattern=r"^maint:mode:(announce|schedule)$")],
-            STATE_MAINT_SCOPE: [CallbackQueryHandler(maint_scope, pattern=rf"^maint:scope:{server_key_pattern}$")],
+            STATE_MAINT_SCOPE: [
+                CallbackQueryHandler(maint_scope, pattern=rf"^maint:scope:(?:all|{SERVER_KEY_PATTERN})$"),
+                CallbackQueryHandler(maint_scope_page, pattern=r"^maint:scope:page:[0-9]{1,9}$"),
+            ],
             STATE_MAINT_URGENCY: [CallbackQueryHandler(maint_urgency, pattern=r"^maint:urgency:(urgent|planned)$")],
             STATE_MAINT_DURATION: [MessageHandler(PRIVATE_TEXT, maint_duration)],
             STATE_MAINT_EXTEND: [MessageHandler(PRIVATE_TEXT, maint_extend_duration)],

@@ -25,7 +25,6 @@ _NAVIGATION_COMMANDS = frozenset(
         "owner",
         "health",
         "subscription",
-        "fail2ban",
         "users",
         "ticket",
         "maint",

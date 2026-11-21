@@ -9,6 +9,7 @@ from telegram.ext import ContextTypes
 from ..bot.guards import authorized_ids, maintenance_manager_ids
 from ..config import TZ, logger
 from ..messaging.outbox import message_payload
+from ..monitoring.zabbix import ZabbixError
 from ..storage import get_active_maintenance, get_scheduled_maintenance, make_outbox_event
 from .notifications import make_maintenance_notice_event
 from .operations import (
@@ -18,7 +19,14 @@ from .operations import (
     mark_schedule_thresholds,
     queue_active_reminder,
 )
-from .policy import MAINT_WARN_THRESHOLDS_MIN, due_thresholds, initial_notified_thresholds, scope_is_current
+from .policy import (
+    MAINT_SCOPE_ALL,
+    MAINT_WARN_THRESHOLDS_MIN,
+    due_thresholds,
+    initial_notified_thresholds,
+    scope_is_current,
+    server_items,
+)
 from .views import (
     maintenance_active_reminder_text,
     maintenance_scheduled_soon_notice,
@@ -63,25 +71,6 @@ async def maint_schedule_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not scheduled:
         return
 
-    if not scope_is_current(scheduled):
-        warned = bool(scheduled.get("announced_thresholds") or scheduled.get("notified_before"))
-        recipients = authorized_ids() if warned else maintenance_manager_ids()
-        event = (
-            make_outbox_event(
-                kind="maintenance_schedule_invalid",
-                recipient_ids=recipients,
-                payload=message_payload(
-                    "⚠️ <b>Запланированные техработы отменены</b>\n"
-                    "Сервер удалён или его конфигурация изменилась. Администратору необходимо создать план заново."
-                ),
-            )
-            if recipients
-            else None
-        )
-        await expire_schedule(scheduled, event)
-        logger.warning("Cancelled maintenance schedule for obsolete server id=%s", scheduled.get("id"))
-        return
-
     try:
         start_at = datetime.fromisoformat(str(scheduled.get("scheduled_start") or ""))
         end_at = datetime.fromisoformat(str(scheduled.get("scheduled_end") or ""))
@@ -121,6 +110,32 @@ async def maint_schedule_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
             else None
         )
         await expire_schedule(scheduled, event)
+        return
+
+    current = scope_is_current(scheduled)
+    if current and scheduled.get("scope", MAINT_SCOPE_ALL) != MAINT_SCOPE_ALL:
+        try:
+            current = scheduled["scope"] in await server_items()
+        except ZabbixError:
+            logger.warning("Zabbix unavailable while checking scheduled maintenance scope")
+            return
+    if not current:
+        warned = bool(scheduled.get("announced_thresholds") or scheduled.get("notified_before"))
+        recipients = authorized_ids() if warned else maintenance_manager_ids()
+        event = (
+            make_outbox_event(
+                kind="maintenance_schedule_invalid",
+                recipient_ids=recipients,
+                payload=message_payload(
+                    "⚠️ <b>Запланированные техработы отменены</b>\n"
+                    "Сервер удалён или его конфигурация изменилась. Администратору необходимо создать план заново."
+                ),
+            )
+            if recipients
+            else None
+        )
+        await expire_schedule(scheduled, event)
+        logger.warning("Cancelled maintenance schedule for obsolete server id=%s", scheduled.get("id"))
         return
 
     notified_raw = scheduled.get("notified_thresholds")

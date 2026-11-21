@@ -134,59 +134,22 @@ def _check_split_storage(data_dir: str) -> list[str]:
 def validate_configuration() -> list[str]:
     # Resolve the public package at call time so diagnostic tests and one-shot
     # deployment checks can safely override settings.
-    from . import (
-        BOT_CONFIG_FILE,
-        BOT_TOKEN,
-        DATA_DIR,
-        INSTANCE_LOCK_PATH,
-        PRIVILEGED_HELPER_BIN,
-        SERVER_CONFIG_DIR,
-        SERVERS,
-        SUDO_BIN,
-    )
+    from . import BOT_CONFIG_FILE, BOT_TOKEN, DATA_DIR, INSTANCE_LOCK_PATH
     from .locations import SECRETS_ENV_FILE
 
     errors: list[str] = []
     if ":" not in BOT_TOKEN or len(BOT_TOKEN) < 20:
         errors.append("BOT_TOKEN: значение не похоже на токен Telegram")
-    if not SERVERS:
-        errors.append("не настроено ни одного сервера")
     errors.extend(_readable_file(str(BOT_CONFIG_FILE), "BOT_CONFIG_FILE"))
-    server_dir = Path(SERVER_CONFIG_DIR)
-    server_files: list[Path] = []
-    if not server_dir.is_dir():
-        errors.append(f"SERVER_CONFIG_DIR: каталог не найден: {server_dir}")
-    elif not os.access(server_dir, os.R_OK | os.X_OK):
-        errors.append(f"SERVER_CONFIG_DIR: каталог недоступен для чтения: {server_dir}")
-    else:
-        try:
-            server_files = sorted(
-                (path for path in server_dir.iterdir() if path.suffix.lower() == ".json"),
-                key=lambda path: (path.name.casefold(), path.name),
-            )
-        except OSError as exc:
-            errors.append(f"SERVER_CONFIG_DIR: не удалось прочитать каталог {server_dir}: {exc}")
-        else:
-            for server_file in server_files:
-                errors.extend(_readable_file(str(server_file), f"SERVER_CONFIG_DIR/{server_file.name}"))
-    if os.name != "nt" and any(server.mode == "local" for server in SERVERS.values()):
-        helper = Path(PRIVILEGED_HELPER_BIN)
-        if not helper.is_absolute() or not helper.is_file() or not os.access(helper, os.X_OK):
-            errors.append(f"PRIVILEGED_HELPER_BIN: helper не найден или не исполняемый: {helper}")
-        if not SUDO_BIN:
-            errors.append("sudo не найден, безопасный privileged helper недоступен")
-
     errors.extend(_check_split_storage(DATA_DIR))
     errors.extend(_writable_parent(INSTANCE_LOCK_PATH, "INSTANCE_LOCK_PATH"))
 
     if os.name != "nt":
         errors.extend(_check_operator_config_permissions(str(BOT_CONFIG_FILE), "BOT_CONFIG_FILE"))
-        errors.extend(_check_operator_config_permissions(str(SERVER_CONFIG_DIR), "SERVER_CONFIG_DIR"))
-        for server_file in server_files:
-            errors.extend(_check_operator_config_permissions(str(server_file), f"SERVER_CONFIG_DIR/{server_file.name}"))
-        for path, name in ((SECRETS_ENV_FILE, "SECRETS_ENV_PATH"),):
-            if path.exists() and stat.S_IMODE(path.stat().st_mode) & 0o007:
-                errors.append(f"{name}: env-файл не должен быть доступен остальным пользователям: {path}")
+        if SECRETS_ENV_FILE.exists() and stat.S_IMODE(SECRETS_ENV_FILE.stat().st_mode) & 0o007:
+            errors.append(
+                f"SECRETS_ENV_PATH: env-файл не должен быть доступен остальным пользователям: {SECRETS_ENV_FILE}"
+            )
     return list(dict.fromkeys(errors))
 
 
@@ -200,15 +163,7 @@ def main() -> int:
         for error in errors:
             print(f"Ошибка конфигурации: {error}", file=sys.stderr)
         return 1
-    from . import SERVERS
-
-    dns_count = sum(len(server.check_a_domains) for server in SERVERS.values())
-    tls_count = sum(len(server.tls_endpoints) for server in SERVERS.values())
-    container_count = sum(len(server.monitor_containers) for server in SERVERS.values())
-    print(
-        "Конфигурация MaintBot корректна: "
-        f"servers={len(SERVERS)} dns_domains={dns_count} tls_endpoints={tls_count} containers={container_count}"
-    )
+    print("Конфигурация MaintBot корректна.")
     return 0
 
 

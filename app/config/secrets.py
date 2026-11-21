@@ -6,9 +6,7 @@ from pathlib import Path
 from dotenv.parser import parse_stream
 from pydantic import BaseModel, ConfigDict, ValidationError, ValidationInfo, field_validator, model_validator
 
-_REQUIRED_SECRET_KEYS = ("BOT_TOKEN", "ADMIN_PASSWORD", "OWNER_PASSWORD")
-_OPTIONAL_SECRET_KEYS = ("REMNAWAVE_METRICS_USER", "REMNAWAVE_METRICS_PASS")
-_SECRET_KEYS = (*_REQUIRED_SECRET_KEYS, *_OPTIONAL_SECRET_KEYS)
+_SECRET_KEYS = ("BOT_TOKEN", "ADMIN_PASSWORD", "OWNER_PASSWORD", "ZABBIX_API_TOKEN")
 
 
 class SecretSettings(BaseModel):
@@ -17,12 +15,11 @@ class SecretSettings(BaseModel):
     BOT_TOKEN: str
     ADMIN_PASSWORD: str
     OWNER_PASSWORD: str
-    REMNAWAVE_METRICS_USER: str = ""
-    REMNAWAVE_METRICS_PASS: str = ""
+    ZABBIX_API_TOKEN: str
 
-    @field_validator("BOT_TOKEN", mode="before")
+    @field_validator("BOT_TOKEN", "ZABBIX_API_TOKEN", mode="before")
     @classmethod
-    def _strip_bot_token(cls, value: object) -> str:
+    def _strip_token(cls, value: object) -> str:
         secret = str(value or "").strip()
         if not secret:
             raise ValueError("empty secret")
@@ -35,11 +32,6 @@ class SecretSettings(BaseModel):
         if len(password) < 16:
             raise ValueError(f"{info.field_name} должен содержать не менее 16 символов")
         return password
-
-    @field_validator("REMNAWAVE_METRICS_USER", "REMNAWAVE_METRICS_PASS", mode="before")
-    @classmethod
-    def _strip_optional_secret(cls, value: object) -> str:
-        return str(value or "").strip()
 
     @model_validator(mode="after")
     def _passwords_must_differ(self) -> SecretSettings:
@@ -81,7 +73,7 @@ def _safe_secret_error_fields(exc: ValidationError) -> tuple[str, bool]:
         if error.get("type") != "missing":
             only_missing = False
         location = error.get("loc") or ()
-        if location and str(location[0]) in _REQUIRED_SECRET_KEYS:
+        if location and str(location[0]) in _SECRET_KEYS:
             fields.add(str(location[0]))
     if not fields:
         # model_validator errors have an empty location. Never include its
@@ -112,9 +104,6 @@ def load_required_secrets(path: Path, *, fallback_path: Path | None = None) -> S
         if env_value:
             merged[key] = env_value
     checked_sources.append("переменные окружения процесса")
-
-    if bool(merged.get("REMNAWAVE_METRICS_USER")) != bool(merged.get("REMNAWAVE_METRICS_PASS")):
-        raise RuntimeError("REMNAWAVE_METRICS_USER и REMNAWAVE_METRICS_PASS должны быть заданы вместе")
 
     try:
         return SecretSettings.model_validate(merged)

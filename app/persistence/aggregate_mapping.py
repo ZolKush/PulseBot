@@ -19,11 +19,9 @@ from .aggregates import ImportantData, UserData
 from .errors import SchemaError, StorageConflictError
 from .normalization import (
     normalize_audit_log,
-    normalize_docker_status,
     normalize_outbox,
     normalize_product_settings,
     normalize_service_requests,
-    normalize_tls_certificates,
 )
 from .unit_of_work import JsonUnitOfWork
 
@@ -85,12 +83,7 @@ def important_data_from_uow(uow: JsonUnitOfWork) -> ImportantData:
         tickets=tickets,
         maintenance=copy.deepcopy(_object(maintenance.get("active"), "maintenance.state.active")),
         scheduled_maintenance=copy.deepcopy(_object(maintenance.get("scheduled"), "maintenance.state.scheduled")),
-        dns_status=uow.dns_cache.export(),
-        daily_node_status=uow.node_status_cache.export(),
         outbox=_outbox_for_origin(uow.outbox.export(), "important"),
-        fail2ban_cursors=uow.fail2ban_cursors.export(),
-        tls_certificates=uow.tls_state.export(),
-        docker_status=_docker_to_aggregate(uow.docker_cache.export()),
     )
 
 
@@ -167,11 +160,6 @@ def apply_important_data(uow: JsonUnitOfWork, aggregate: ImportantData) -> None:
             "scheduled": copy.deepcopy(_object(aggregate.scheduled_maintenance, "scheduled_maintenance")),
         }
     )
-    uow.dns_cache.replace(_object(aggregate.dns_status, "dns_status"))
-    uow.node_status_cache.replace(_object(aggregate.daily_node_status, "daily_node_status"))
-    uow.fail2ban_cursors.replace(_object(aggregate.fail2ban_cursors, "fail2ban_cursors"))
-    uow.tls_state.replace(normalize_tls_certificates(aggregate.tls_certificates))
-    uow.docker_cache.replace(_docker_to_store(normalize_docker_status(aggregate.docker_status)))
     _replace_outbox_origin(uow, "important", aggregate.outbox)
 
 
@@ -208,60 +196,6 @@ def _replace_outbox_origin(uow: JsonUnitOfWork, origin: str, raw: Any) -> None:
         tagged[OUTBOX_ORIGIN_FIELD] = origin
         retained[event_id] = tagged
     uow.outbox.replace(retained)
-
-
-def _docker_to_store(raw: dict[str, Any]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for server_key, raw_status in raw.items():
-        status = _object(raw_status, f"docker_status.{server_key}")
-        containers: list[dict[str, Any]] = []
-        for raw_container in status.get("containers", []):
-            if not isinstance(raw_container, list) or len(raw_container) != 4:
-                raise SchemaError(f"docker_status.{server_key} contains an invalid container")
-            containers.append(
-                {
-                    "name": raw_container[0],
-                    "running": raw_container[1],
-                    "status": raw_container[2],
-                    "restarts": raw_container[3],
-                }
-            )
-        result[str(server_key)] = {
-            "updated_at": copy.deepcopy(status.get("updated_at")),
-            "containers": containers,
-        }
-        if "_config_fingerprint" in status:
-            result[str(server_key)]["_config_fingerprint"] = status["_config_fingerprint"]
-    return result
-
-
-def _docker_to_aggregate(raw: dict[str, Any]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for server_key, raw_status in raw.items():
-        status = _object(raw_status, f"monitoring.docker_cache.{server_key}")
-        containers: list[list[Any]] = []
-        raw_containers = status.get("containers", [])
-        if not isinstance(raw_containers, list):
-            raise SchemaError(f"monitoring.docker_cache.{server_key}.containers must be an array")
-        for raw_container in raw_containers:
-            container = _object(raw_container, f"monitoring.docker_cache.{server_key}.container")
-            if set(container) != {"name", "running", "status", "restarts"}:
-                raise SchemaError(f"monitoring.docker_cache.{server_key} contains an invalid container")
-            containers.append(
-                [
-                    container["name"],
-                    container["running"],
-                    container["status"],
-                    container["restarts"],
-                ]
-            )
-        result[str(server_key)] = {
-            "updated_at": copy.deepcopy(status.get("updated_at")),
-            "containers": containers,
-        }
-        if "_config_fingerprint" in status:
-            result[str(server_key)]["_config_fingerprint"] = status["_config_fingerprint"]
-    return normalize_docker_status(result)
 
 
 def _select(source: dict[str, Any], fields: frozenset[str]) -> dict[str, Any]:

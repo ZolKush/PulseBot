@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
-import pytest
-from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from telegram.ext import CallbackQueryHandler, CommandHandler, ConversationHandler, MessageHandler, TypeHandler
 
@@ -65,24 +61,9 @@ DEFAULT_ROUTES = (
     r"callback:^menu:help$",
     r"callback:^menu:status$",
     r"callback:^menu:subscription$",
-    r"callback:^status:pick$",
-    r"callback:^status:show:[a-z0-9_-]{1,12}$",
-    r"callback:^status:refresh:[a-z0-9_-]{1,12}$",
-    r"callback:^status:ufw:[a-z0-9_-]{1,12}$",
-    r"callback:^status:dnsrefresh:[a-z0-9_-]{1,12}$",
-    r"callback:^status:tlsrefresh:[a-z0-9_-]{1,12}$",
-    r"callback:^tls:list:[a-z0-9_-]{1,12}$",
-    r"callback:^dns:back:[a-z0-9_-]{1,12}$",
-    r"callback:^docker:list:[a-z0-9_-]{1,12}$",
-    r"callback:^docker:back:[a-z0-9_-]{1,12}$",
-    r"callback:^docker:show:[a-z0-9_-]{1,12}:[a-zA-Z0-9_.\-]{1,64}$",
-    r"callback:^docker:inspect:[a-z0-9_-]{1,12}:[a-zA-Z0-9_.\-]{1,64}$",
-    r"callback:^docker:logs:[a-z0-9_-]{1,12}:[a-zA-Z0-9_.\-]{1,64}:\d{1,4}$",
-    "command:fail2ban",
-    r"callback:^f2b:menu:[a-z0-9_-]{1,12}$",
-    r"callback:^f2b:tail:[a-z0-9_-]{1,12}:\d{1,5}$",
-    r"callback:^f2b:digest:[a-z0-9_-]{1,12}$",
-    r"callback:^f2b:back:[a-z0-9_-]{1,12}$",
+    r"callback:^status:hosts:[0-9]{1,9}$",
+    r"callback:^status:issues:[0-9]{1,9}$",
+    r"callback:^status:metrics:[0-9]{1,20}:[0-9]{1,9}$",
     "callback:*",
     "message",
 )
@@ -90,40 +71,18 @@ DEFAULT_ROUTES = (
 NON_BLOCKING_ROUTES = (
     "command:health",
     r"callback:^menu:status$",
-    r"callback:^status:pick$",
-    r"callback:^status:show:[a-z0-9_-]{1,12}$",
-    r"callback:^status:refresh:[a-z0-9_-]{1,12}$",
-    r"callback:^status:ufw:[a-z0-9_-]{1,12}$",
-    r"callback:^status:dnsrefresh:[a-z0-9_-]{1,12}$",
-    r"callback:^status:tlsrefresh:[a-z0-9_-]{1,12}$",
-    r"callback:^tls:list:[a-z0-9_-]{1,12}$",
-    r"callback:^dns:back:[a-z0-9_-]{1,12}$",
-    r"callback:^docker:list:[a-z0-9_-]{1,12}$",
-    r"callback:^docker:back:[a-z0-9_-]{1,12}$",
-    r"callback:^docker:show:[a-z0-9_-]{1,12}:[a-zA-Z0-9_.\-]{1,64}$",
-    r"callback:^docker:inspect:[a-z0-9_-]{1,12}:[a-zA-Z0-9_.\-]{1,64}$",
-    r"callback:^docker:logs:[a-z0-9_-]{1,12}:[a-zA-Z0-9_.\-]{1,64}:\d{1,4}$",
-    "command:fail2ban",
-    r"callback:^f2b:menu:[a-z0-9_-]{1,12}$",
-    r"callback:^f2b:tail:[a-z0-9_-]{1,12}:\d{1,5}$",
-    r"callback:^f2b:digest:[a-z0-9_-]{1,12}$",
-    r"callback:^f2b:back:[a-z0-9_-]{1,12}$",
+    r"callback:^status:hosts:[0-9]{1,9}$",
+    r"callback:^status:issues:[0-9]{1,9}$",
+    r"callback:^status:metrics:[0-9]{1,20}:[0-9]{1,9}$",
 )
 
 DEFAULT_JOB_NAMES = (
-    "fail2ban_digest",
-    "dns_daily_refresh",
-    "dns_refresh_startup",
     "maint_active_reminder",
     "maint_schedule_tick",
     "auth_prune",
     "outbox_delivery",
     "ticket_orphan_release",
     "subscription_lifecycle",
-    "docker_status_refresh",
-    "tls_certificate_check_startup",
-    "tls_certificate_check",
-    "tls_deadline_evaluation",
     "message_cleanup",
 )
 
@@ -151,10 +110,6 @@ def _route_key(handler: object) -> str:
 def _effective_block(handler: Any) -> bool:
     value = handler.block
     return bool(value if isinstance(value, bool) else value.value)
-
-
-def _cron_fields(trigger: CronTrigger) -> dict[str, str]:
-    return {field.name: str(field) for field in trigger.fields}
 
 
 def test_default_handler_groups_and_route_order_are_stable() -> None:
@@ -194,9 +149,7 @@ def test_persistent_conversation_contract_is_stable() -> None:
 
 
 def test_default_job_names_and_schedules_are_stable() -> None:
-    before = datetime.now(timezone.utc)
     application = main_module.build_app()
-    after = datetime.now(timezone.utc)
     assert application.job_queue is not None
     jobs = {job.name: job for job in application.job_queue.jobs()}
 
@@ -209,64 +162,9 @@ def test_default_job_names_and_schedules_are_stable() -> None:
         "outbox_delivery": 10,
         "ticket_orphan_release": 60,
         "subscription_lifecycle": 60,
-        "docker_status_refresh": 21600,
-        "tls_certificate_check": 604800,
-        "tls_deadline_evaluation": 86400,
         "message_cleanup": 1800,
     }
     for name, seconds in intervals.items():
         trigger = jobs[name].job.trigger
         assert isinstance(trigger, IntervalTrigger)
         assert trigger.interval.total_seconds() == seconds
-
-    daily = {
-        "fail2ban_digest": ("12", "0"),
-        "dns_daily_refresh": ("3", "5"),
-    }
-    for name, (hour, minute) in daily.items():
-        trigger = jobs[name].job.trigger
-        assert isinstance(trigger, CronTrigger)
-        fields = _cron_fields(trigger)
-        assert (fields["hour"], fields["minute"], fields["second"]) == (hour, minute, "0")
-        assert fields["day_of_week"] == "sun,mon,tue,wed,thu,fri,sat"
-        assert str(trigger.timezone) == "Europe/Moscow"
-
-    startup = jobs["dns_refresh_startup"].job.trigger
-    assert isinstance(startup, DateTrigger)
-    assert before.timestamp() + 4 <= startup.run_date.timestamp() <= after.timestamp() + 6
-
-    tls_startup = jobs["tls_certificate_check_startup"].job.trigger
-    assert isinstance(tls_startup, DateTrigger)
-    assert before.timestamp() + 9 <= tls_startup.run_date.timestamp() <= after.timestamp() + 11
-
-
-def test_mixed_mode_keeps_routes_and_adds_node_status_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(main_module, "BOT_MODE", "mixed")
-    before = datetime.now(timezone.utc)
-    application = main_module.build_app()
-    after = datetime.now(timezone.utc)
-
-    routes = tuple(_route_key(handler) for handler in application.handlers[0])
-    assert routes == DEFAULT_ROUTES
-    assert not any("status:ssh" in route for route in routes)
-
-    assert application.job_queue is not None
-    jobs = {job.name: job for job in application.job_queue.jobs()}
-    assert tuple(jobs) == (
-        "fail2ban_digest",
-        "dns_daily_refresh",
-        "dns_refresh_startup",
-        "daily_node_status_refresh",
-        "daily_node_status_startup",
-        *DEFAULT_JOB_NAMES[3:],
-    )
-
-    daily = jobs["daily_node_status_refresh"].job.trigger
-    assert isinstance(daily, CronTrigger)
-    fields = _cron_fields(daily)
-    assert (fields["hour"], fields["minute"], fields["second"]) == ("12", "0", "0")
-    assert str(daily.timezone) == "Europe/Moscow"
-
-    startup = jobs["daily_node_status_startup"].job.trigger
-    assert isinstance(startup, DateTrigger)
-    assert before.timestamp() + 9 <= startup.run_date.timestamp() <= after.timestamp() + 11

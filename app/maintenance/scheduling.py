@@ -17,7 +17,7 @@ from ..messaging.message_cleanup import record_navigation_result
 from ..storage import get_scheduled_maintenance
 from .calendar import parse_clock_range, schedule_calendar_kb
 from .operations import cancel_scheduled_maintenance, schedule_maintenance
-from .policy import MAINT_SCOPE_ALL, normalize_scope
+from .policy import MAINT_SCOPE_ALL, normalize_scope, scope_fingerprint
 from .records import build_scheduled_maintenance_record
 from .state import (
     STATE_MAINT_SCHEDULE_DATE,
@@ -134,7 +134,13 @@ async def maint_schedule_range(update: Update, context: ContextTypes.DEFAULT_TYP
     scope = normalize_scope(str(data.get("maint_scope", MAINT_SCOPE_ALL)))
     author = staff_title(update)
     author_id = get_user_id(update)
-    scheduled = build_scheduled_maintenance_record(scope, start_at, end_at, author_id, author)
+    if scope != MAINT_SCOPE_ALL and data.get("maint_scope_fingerprint") != scope_fingerprint(scope):
+        if message:
+            await message.reply_text("Выберите узел техработ заново через /maint.")
+        clear_maintenance_context(context)
+        return ConversationHandler.END
+    label = str(data.get("maint_scope_label") or "")
+    scheduled = build_scheduled_maintenance_record(scope, start_at, end_at, author_id, author, label=label)
     if not await schedule_maintenance(scheduled):
         if message:
             await message.reply_text(
@@ -151,7 +157,7 @@ async def maint_schedule_range(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
     panel_text = (
-        format_scheduled_maintenance(scope, start_at, end_at, author)
+        format_scheduled_maintenance(scope, start_at, end_at, author, label=label)
         + "\n\nУведомления будут поставлены в очередь за 3 суток, 12 часов и 30 минут, а также в момент начала."
     )
     panel_chat_id = data.get("maint_panel_chat_id")

@@ -12,6 +12,7 @@ class Maintenance(TypedDict, total=False):
     id: str
     active: bool
     scope: MaintScope
+    scope_label: str
     scope_fingerprint: str
     urgency: MaintUrgency
     duration_min: int
@@ -27,6 +28,7 @@ class Maintenance(TypedDict, total=False):
 class ScheduledMaintenance(TypedDict, total=False):
     id: str
     scope: MaintScope
+    scope_label: str
     scope_fingerprint: str
     urgency: MaintUrgency
     duration_min: int

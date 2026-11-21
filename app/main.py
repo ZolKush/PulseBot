@@ -16,7 +16,6 @@ from app.bot.application import build_application
 from app.bot.application import run_application as _run_application
 from app.bot.conversations import NavigableConversationHandler
 from app.bot.errors import blocked_user_guard
-from app.config import BOT_MODE
 from app.runtime.lock import SingleInstanceLock
 
 __all__ = [
@@ -30,12 +29,12 @@ __all__ = [
 
 def build_app() -> Application:
     """Build the Telegram application from the current runtime settings."""
-    return build_application(bot_mode=BOT_MODE)
+    return build_application()
 
 
 def run_application(*, instance_lock: SingleInstanceLock | None = None) -> None:
     """Run polling through the canonical application module."""
-    _run_application(instance_lock=instance_lock, bot_mode=BOT_MODE)
+    _run_application(instance_lock=instance_lock)
 
 
 def main() -> None:

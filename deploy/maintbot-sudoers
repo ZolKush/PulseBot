@@ -1,3 +1,0 @@
-Defaults!/usr/local/libexec/maintbot-helper env_reset,secure_path=/usr/sbin:/usr/bin:/sbin:/bin
-Cmnd_Alias MAINTBOT_READONLY_HELPER = /usr/local/libexec/maintbot-helper *
-maintbot ALL=(root) NOPASSWD: NOSETENV: MAINTBOT_READONLY_HELPER

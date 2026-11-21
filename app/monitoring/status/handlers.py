@@ -1,349 +1,90 @@
-"""Telegram callbacks for status, DNS, UFW and TLS screens."""
+"""Read-only status navigation. Every open and refresh reads current Zabbix data."""
 
 from __future__ import annotations
 
-import asyncio
-import time
-from collections.abc import Awaitable
-from typing import Any
-
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import ParseMode
+from telegram import LinkPreviewOptions, Update
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
-from ...bot.guards import require_admin, require_subscriber
-from ...bot.ui import clip_html_message, html_escape, ui_error_text, ui_info_text
-from ...config import SERVERS, logger
+from ...bot.guards import is_admin, require_admin, require_subscriber
+from ...config import ZABBIX_API_TOKEN, ZABBIX_API_URL, logger
 from ...messaging.message_cleanup import record_navigation_result
-from ...storage import set_dns_status_cache
-from ..remnawave import get_metrics_snapshot
-from ..tls.service import refresh_tls_certificates
-from ..tls.views import format_tls_report, tls_report_keyboard
-from .cache import invalidate_status_cache, tls_views
-from .collectors import build_status_snapshot_and_server
-from .common import first_server_key, get_server_target
-from .dns import build_dns_status_payload_live
-from .docker import refresh_docker_status
-from .keyboards import (
-    parse_dns_refresh_callback,
-    parse_refresh_callback,
-    parse_ufw_callback,
-    resolve_server_key,
-    status_pick_keyboard,
-    status_pick_text,
-    ufw_actions_keyboard,
-)
-from .presenter import build_status_message
-from .source_policy import server_uses_metrics
-from .views import format_ufw_message
-
-_REFRESH_LOCKS: dict[str, asyncio.Lock] = {}
+from ..zabbix import ZabbixClient, ZabbixError
+from .views import UNAVAILABLE, Screen, host_list, metric_list, notice, problem_list
 
 
-@require_subscriber
-async def cmd_health(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-) -> None:
+async def _show(update: Update, *, view: str, page: int = 0, host_id: str = "") -> None:
     query = update.callback_query
     message = update.effective_message
-    if not message:
+    if message is None:
         return
     if query:
         await query.answer()
-    if not SERVERS:
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Меню", callback_data="menu:home")]])
-        text = ui_error_text("Сервер не настроен.")
-        if query:
-            result = await query.edit_message_text(text, reply_markup=keyboard)
-        else:
-            result = await message.reply_text(text, reply_markup=keyboard)
-        await record_navigation_result(update, result)
+
+    staff = is_admin(update)
+    if view in {"hosts", "metrics"} and not staff:
         return
-    if len(SERVERS) > 1:
-        if query:
-            result = await query.edit_message_text(
-                status_pick_text(),
-                parse_mode=ParseMode.HTML,
-                reply_markup=status_pick_keyboard(),
-            )
+    screen: Screen
+    try:
+        client = ZabbixClient(ZABBIX_API_URL, ZABBIX_API_TOKEN)
+        hosts = await client.hosts()
+        if not hosts:
+            screen = notice(UNAVAILABLE, "menu:status")
+        elif view == "hosts":
+            screen = host_list(hosts, page)
+        elif view == "metrics":
+            host = next((item for item in hosts if item.id == host_id), None)
+            if host is None:
+                screen = notice("Этот узел больше недоступен. Обновите список узлов.", "status:hosts:0")
+            else:
+                screen = metric_list(host, await client.metrics(host_id), page)
         else:
-            result = await message.reply_text(
-                status_pick_text(),
-                parse_mode=ParseMode.HTML,
-                reply_markup=status_pick_keyboard(),
-            )
-        await record_navigation_result(update, result)
+            problems = await client.problems(hosts, staff=staff)
+            screen = problem_list(hosts, problems, page, staff=staff)
+    except ZabbixError as error:
+        logger.warning("Zabbix status request failed: %s", error, extra={"action": "zabbix_status_failed"})
+        retry = str(query.data) if query and query.data else "menu:status"
+        screen = notice(UNAVAILABLE, retry)
+
+    # Staff access can change while an API request is in flight.
+    if (staff or view in {"hosts", "metrics"}) and not is_admin(update):
         return
-    text, markup = await build_status_message(update, server_key=first_server_key())
+    text, markup = screen
+    preview = LinkPreviewOptions(is_disabled=True)
     if query:
-        result = await query.edit_message_text(
-            text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=markup,
-        )
+        try:
+            result = await query.edit_message_text(text, reply_markup=markup, link_preview_options=preview)
+        except BadRequest as error:
+            if "message is not modified" in str(error).lower():
+                return
+            raise
     else:
-        result = await message.reply_text(
-            text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=markup,
-        )
+        result = await message.reply_text(text, reply_markup=markup, link_preview_options=preview)
     await record_navigation_result(update, result)
 
 
 @require_subscriber
-async def status_pick_cb(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-) -> None:
-    query = update.callback_query
-    if not query:
-        return
-    await query.answer()
-    await query.edit_message_text(
-        status_pick_text(),
-        parse_mode=ParseMode.HTML,
-        reply_markup=status_pick_keyboard(),
-    )
+async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _show(update, view="hosts" if is_admin(update) else "issues")
 
 
 @require_subscriber
-async def status_show_cb(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-) -> None:
+async def status_issues_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    if not query:
-        return
-    await query.answer()
-    server_key = resolve_server_key(query.data or "", r"status:show")
-    if not get_server_target(server_key):
-        await query.edit_message_text(
-            ui_error_text("сервер не найден."),
-            reply_markup=status_pick_keyboard(),
-        )
-        return
-    text, markup = await build_status_message(update, server_key=server_key)
-    await query.edit_message_text(
-        text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=markup,
-    )
+    if query and isinstance(query.data, str):
+        await _show(update, view="issues", page=int(query.data.rsplit(":", 1)[1]))
 
 
 @require_admin
-async def status_ufw_cb(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-) -> None:
+async def status_hosts_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    if not query:
-        return
-    await query.answer()
-    server_key = parse_ufw_callback(query.data or "")
-    if not server_key or not get_server_target(server_key):
-        await query.edit_message_text(
-            ui_error_text("сервер не найден."),
-            reply_markup=status_pick_keyboard(),
-        )
-        return
-    snapshot, server = await build_status_snapshot_and_server(update, server_key)
-    if not snapshot or not server:
-        await query.edit_message_text(
-            ui_error_text("сервер не найден."),
-            reply_markup=status_pick_keyboard(),
-        )
-        return
-    await query.edit_message_text(
-        format_ufw_message(snapshot),
-        parse_mode=ParseMode.HTML,
-        reply_markup=ufw_actions_keyboard(server.key),
-    )
-
-
-async def _refresh_status_screen(update: Update, *, server_key: str) -> None:
-    query = update.callback_query
-    if not query:
-        return
-    server = get_server_target(server_key)
-    if not server:
-        await query.edit_message_text(
-            ui_error_text("сервер не найден."),
-            reply_markup=status_pick_keyboard(),
-        )
-        return
-    lock = _REFRESH_LOCKS.setdefault(server.key, asyncio.Lock())
-    if lock.locked():
-        await query.answer("Обновление уже выполняется.", show_alert=False)
-        return
-    started = time.monotonic()
-    async with lock:
-        await query.answer("Обновляю метрики, DNS, контейнеры и сертификаты...")
-        errors: list[str] = []
-        refreshes: list[Awaitable[Any]] = [
-            build_dns_status_payload_live(server),
-            refresh_docker_status(server),
-            refresh_tls_certificates(source="manual", server_key=server.key),
-        ]
-        use_metrics = server_uses_metrics(server)
-        if use_metrics:
-            refreshes.append(get_metrics_snapshot(force_refresh=True))
-
-        async def capture(awaitable: Awaitable[Any]) -> Any:
-            try:
-                return await awaitable
-            except Exception as exc:
-                return exc
-
-        results = await asyncio.gather(*(capture(refresh) for refresh in refreshes))
-
-        dns_result = results[0]
-        if isinstance(dns_result, Exception):
-            errors.append(f"DNS: {dns_result.__class__.__name__}")
-            logger.warning(
-                "Manual status refresh DNS failed server=%s error=%s",
-                server.key,
-                dns_result,
-                extra={"action": "status_refresh_dns_failed", "source": "manual", "server_key": server.key},
-            )
-        else:
-            try:
-                await set_dns_status_cache(server.key, dns_result)
-            except Exception as exc:
-                errors.append(f"DNS cache: {exc.__class__.__name__}")
-                logger.warning(
-                    "Manual status refresh DNS cache write failed server=%s error=%s",
-                    server.key,
-                    exc,
-                    extra={"action": "status_refresh_dns_cache_failed", "source": "manual", "server_key": server.key},
-                )
-        docker_result = results[1]
-        if isinstance(docker_result, Exception):
-            errors.append(f"Docker: {docker_result.__class__.__name__}")
-            logger.warning(
-                "Manual status refresh Docker failed server=%s error=%s",
-                server.key,
-                docker_result,
-                extra={"action": "status_refresh_docker_failed", "source": "manual", "server_key": server.key},
-            )
-        tls_result = results[2]
-        if isinstance(tls_result, Exception):
-            errors.append(f"TLS: {tls_result.__class__.__name__}")
-            logger.warning(
-                "Manual status refresh TLS failed server=%s error=%s",
-                server.key,
-                tls_result,
-                extra={"action": "status_refresh_tls_failed", "source": "manual", "server_key": server.key},
-            )
-        else:
-            tls_errors = sum(item.get("status") == "error" for item in tls_result.values())
-            if tls_errors:
-                errors.append(f"TLS: не удалось проверить сертификатов: {tls_errors}")
-        if use_metrics:
-            metrics_result = results[3]
-            if isinstance(metrics_result, Exception):
-                errors.append(f"метрики: {metrics_result.__class__.__name__}")
-            elif not metrics_result.ok:
-                errors.append(f"метрики: {html_escape(metrics_result.error or 'ошибка')}")
-        invalidate_status_cache(server.key)
-        text, markup = await build_status_message(update, server_key=server.key)
-        note = (
-            ui_error_text("; ".join(errors))
-            if errors
-            else ui_info_text("Метрики, DNS, статусы контейнеров и TLS-сертификатов обновлены.")
-        )
-        await query.edit_message_text(
-            clip_html_message(text + "\n\n" + note),
-            parse_mode=ParseMode.HTML,
-            reply_markup=markup,
-        )
-    logger.info(
-        "Status refreshed source=manual server=%s duration_ms=%s errors=%s",
-        server.key,
-        round((time.monotonic() - started) * 1000),
-        len(errors),
-        extra={
-            "action": "status_refresh",
-            "source": "manual",
-            "server_key": server.key,
-            "duration_ms": round((time.monotonic() - started) * 1000),
-        },
-    )
-
-
-@require_subscriber
-async def status_refresh_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    if not query:
-        return
-    server_key = parse_refresh_callback(query.data or "")
-    if not server_key:
-        await query.answer("Сервер не найден.", show_alert=True)
-        return
-    await _refresh_status_screen(update, server_key=server_key)
-
-
-@require_subscriber
-async def status_dns_refresh_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Compatibility for an old keyboard; performs the new unified refresh."""
-    query = update.callback_query
-    if not query:
-        return
-    server_key = parse_dns_refresh_callback(query.data or "")
-    if not server_key:
-        await query.answer("Сервер не найден.", show_alert=True)
-        return
-    await _refresh_status_screen(update, server_key=server_key)
+    if query and isinstance(query.data, str):
+        await _show(update, view="hosts", page=int(query.data.rsplit(":", 1)[1]))
 
 
 @require_admin
-async def status_tls_refresh_cb(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-) -> None:
+async def status_metrics_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    if not query:
-        return
-    server_key = resolve_server_key(query.data or "", r"status:tlsrefresh")
-    server = get_server_target(server_key)
-    if not server:
-        await query.answer("Сервер не найден.", show_alert=True)
-        return
-    await query.answer()
-    await query.edit_message_text(
-        format_tls_report(server.label, tls_views(server.key, admin_mode=True)),
-        parse_mode=ParseMode.HTML,
-        reply_markup=tls_report_keyboard(server.key),
-    )
-
-
-@require_subscriber
-async def dns_back_cb(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-) -> None:
-    query = update.callback_query
-    if not query:
-        return
-    await query.answer()
-    server_key = resolve_server_key(query.data or "", r"dns:back")
-    if not server_key:
-        server_key = first_server_key()
-    text, markup = await build_status_message(update, server_key=server_key)
-    await query.edit_message_text(
-        text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=markup,
-    )
-
-
-__all__ = [
-    "cmd_health",
-    "dns_back_cb",
-    "status_dns_refresh_cb",
-    "status_refresh_cb",
-    "status_pick_cb",
-    "status_show_cb",
-    "status_tls_refresh_cb",
-    "status_ufw_cb",
-]
+    if query and isinstance(query.data, str):
+        _, _, host_id, page = query.data.split(":")
+        await _show(update, view="metrics", host_id=host_id, page=int(page))

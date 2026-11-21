@@ -18,6 +18,8 @@ def build_maintenance_record(
     minutes: int,
     author_id: int | None,
     author_name: str,
+    *,
+    label: str = "",
 ) -> dict[str, Any]:
     now = datetime.now(TZ)
     duration_min = hhmm_to_minutes(hours, minutes)
@@ -26,6 +28,7 @@ def build_maintenance_record(
         "id": uuid4().hex,
         "active": True,
         "scope": normalize_scope(scope),
+        "scope_label": label,
         "scope_fingerprint": scope_fingerprint(scope),
         "urgency": urgency,
         "duration_min": duration_min,
@@ -44,6 +47,8 @@ def build_scheduled_maintenance_record(
     end_at: datetime,
     author_id: int | None,
     author_name: str,
+    *,
+    label: str = "",
 ) -> ScheduledMaintenance:
     duration_min = max(1, int((end_at - start_at).total_seconds() // 60))
     now = datetime.now(TZ)
@@ -51,6 +56,7 @@ def build_scheduled_maintenance_record(
     return ScheduledMaintenance(
         id=uuid4().hex,
         scope=normalize_scope(scope),
+        scope_label=label,
         scope_fingerprint=scope_fingerprint(scope),
         urgency="planned",
         duration_min=duration_min,
@@ -80,6 +86,7 @@ def scheduled_to_active_record(scheduled: ScheduledMaintenance) -> Maintenance:
         id=str(scheduled.get("id") or uuid4().hex),
         active=True,
         scope=normalize_scope(str(scheduled.get("scope") or MAINT_SCOPE_ALL)),
+        scope_label=str(scheduled.get("scope_label") or ""),
         scope_fingerprint=str(scheduled.get("scope_fingerprint") or ""),
         urgency="planned",
         duration_min=max(duration_min, 1),

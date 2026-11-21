@@ -145,10 +145,8 @@ def _register_product_routes(
 def _register_maintenance_routes(
     application: Application,
     conversations: list[NavigableConversationHandler],
-    *,
-    server_key_pattern: str,
 ) -> None:
-    flow = build_maintenance_flow(server_key_pattern)
+    flow = build_maintenance_flow()
     conversations.append(flow)
     application.add_handler(flow)
     application.add_handler(CallbackQueryHandler(maint_end_confirm_cb, pattern=r"^maint:endconfirm:[0-9a-f]+$"))
@@ -197,8 +195,6 @@ def _register_menu_routes(application: Application) -> None:
 
 def register_routes(
     application: Application,
-    *,
-    server_key_pattern: str,
 ) -> list[NavigableConversationHandler]:
     """Register group-zero feature routes and return persistent conversations."""
     conversations: list[NavigableConversationHandler] = []
@@ -206,16 +202,9 @@ def register_routes(
     _register_administration_routes(application, conversations)
     _register_profile_routes(application, conversations)
     _register_product_routes(application, conversations)
-    _register_maintenance_routes(
-        application,
-        conversations,
-        server_key_pattern=server_key_pattern,
-    )
+    _register_maintenance_routes(application, conversations)
     _register_ticket_routes(application, conversations)
     _register_users_routes(application, conversations)
     _register_menu_routes(application)
-    register_monitoring_routes(
-        application,
-        server_key_pattern=server_key_pattern,
-    )
+    register_monitoring_routes(application)
     return conversations

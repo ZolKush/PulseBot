@@ -1,4 +1,4 @@
-MENU_STATUS = "📊 Статус сервера"
+MENU_STATUS = "📊 Статус серверов"
 MENU_SUBSCRIPTION = "🔗 Подключение и подписка"
 MENU_TICKET = "🎫 Тикеты"
 MENU_USERS = "👥 Пользователи"

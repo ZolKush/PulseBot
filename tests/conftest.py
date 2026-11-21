@@ -14,8 +14,7 @@ import pytest
 _TEST_ROOT = Path(tempfile.mkdtemp(prefix="maintbot-tests-"))
 atexit.register(shutil.rmtree, _TEST_ROOT, True)
 _TEST_CONFIG_DIR = _TEST_ROOT / "conf"
-_TEST_SERVER_DIR = _TEST_CONFIG_DIR / "servers"
-_TEST_SERVER_DIR.mkdir(parents=True)
+_TEST_CONFIG_DIR.mkdir(parents=True)
 _BOT_CONFIG = json.loads(
     (Path(__file__).resolve().parents[1] / "examples" / "conf" / "bot.json").read_text(encoding="utf-8")
 )
@@ -30,24 +29,11 @@ _BOT_CONFIG.update(
     json.dumps(_BOT_CONFIG),
     encoding="utf-8",
 )
-(_TEST_SERVER_DIR / "anything.json").write_text(
-    json.dumps(
-        {
-            "version": 1,
-            "key": "local",
-            "label": "Local server",
-            "flag": "",
-            "connection": {"transport": "local"},
-            "monitoring": {"source": "system", "node_uuid": ""},
-        }
-    ),
-    encoding="utf-8",
-)
-
 os.environ.update(
     {
         "MAINTBOT_CONFIG_DIR": str(_TEST_CONFIG_DIR),
         "SECRETS_ENV_PATH": str(_TEST_ROOT / "missing.secrets"),
+        "ZABBIX_API_TOKEN": "synthetic-zabbix-token",
         "BOT_TOKEN": "123456:TEST_TOKEN_NOT_USED_BY_TESTS_ABCDEFGHIJKLMNOPQRSTUVWXYZ",
         "ADMIN_PASSWORD": "test-admin-password-that-is-never-used",
         "OWNER_PASSWORD": "test-owner-password-that-is-never-used",

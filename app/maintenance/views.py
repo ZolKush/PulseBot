@@ -16,13 +16,13 @@ def format_datetime_short(value: datetime) -> str:
     return value.astimezone(TZ).strftime("%d.%m.%Y %H:%M")
 
 
-def format_maintenance(scope: str, urgency: str, hours: int, minutes: int, author: str) -> str:
+def format_maintenance(scope: str, urgency: str, hours: int, minutes: int, author: str, *, label: str = "") -> str:
     now = datetime.now(TZ).strftime("%d.%m.%Y %H:%M")
     urgency_label = "срочные" if urgency == "urgent" else "плановые"
     return (
         f"{maint_heading(urgency, 'Работы начались')}\n"
         f"{SEP}\n"
-        f"{scope_line(scope)}\n"
+        f"{scope_line(scope, label)}\n"
         f"• Тип: <b>{html_escape(urgency_label)}</b>\n"
         f"• Оценка простоя: <b>{html_escape(humanize_hhmm(hours, minutes))}</b>\n"
         f"• Ответственный: <b>{html_escape(author)}</b>\n"
@@ -30,11 +30,13 @@ def format_maintenance(scope: str, urgency: str, hours: int, minutes: int, autho
     )
 
 
-def format_scheduled_maintenance(scope: str, start_at: datetime, end_at: datetime, author: str) -> str:
+def format_scheduled_maintenance(
+    scope: str, start_at: datetime, end_at: datetime, author: str, *, label: str = ""
+) -> str:
     return (
         f"{maint_heading('planned', 'Работы запланированы')}\n"
         f"{SEP}\n"
-        f"{scope_line(scope)}\n"
+        f"{scope_line(scope, label)}\n"
         f"• Начало: <code>{html_escape(format_datetime_short(start_at))}</code> ({html_escape(TZ_NAME)})\n"
         f"• Окончание: <code>{html_escape(format_datetime_short(end_at))}</code> ({html_escape(TZ_NAME)})\n"
         f"• Ответственный: <b>{html_escape(author)}</b>"
@@ -115,7 +117,7 @@ def maintenance_panel_text(maintenance: dict[str, Any]) -> str:
     lines = [
         maint_heading(maintenance.get("urgency"), "Работы сейчас активны"),
         SEP,
-        scope_line(str(maintenance.get("scope", MAINT_SCOPE_ALL))),
+        scope_line(str(maintenance.get("scope", MAINT_SCOPE_ALL)), str(maintenance.get("scope_label") or "")),
         f"• Тип: <b>{html_escape(urgency_label)}</b>",
         f"• Оценка простоя: <b>{html_escape(humanize_hhmm(hours, minutes))}</b>",
     ]
@@ -135,7 +137,7 @@ def scheduled_panel_text(scheduled: dict[str, Any]) -> str:
     lines = [
         maint_heading("planned", "Работы запланированы"),
         SEP,
-        scope_line(str(scheduled.get("scope", MAINT_SCOPE_ALL))),
+        scope_line(str(scheduled.get("scope", MAINT_SCOPE_ALL)), str(scheduled.get("scope_label") or "")),
     ]
     if start_at:
         lines.append(f"• Начало: <code>{html_escape(format_datetime_short(start_at))}</code> ({html_escape(TZ_NAME)})")
@@ -156,7 +158,7 @@ def maintenance_extend_notice(
     return (
         f"{maint_heading(maintenance.get('urgency'), 'Срок работ продлён')}\n"
         f"{SEP}\n"
-        f"{scope_line(str(maintenance.get('scope', MAINT_SCOPE_ALL)))}\n"
+        f"{scope_line(str(maintenance.get('scope', MAINT_SCOPE_ALL)), str(maintenance.get('scope_label') or ''))}\n"
         f"• Новый ориентир простоя: <b>{html_escape(humanize_hhmm(hours, minutes))}</b>\n"
         f"• Окончание: <code>{html_escape(end_text)}</code> ({html_escape(TZ_NAME)})\n"
         f"• Ответственный: <b>{html_escape(author)}</b>\n\n"
@@ -173,7 +175,7 @@ def maintenance_end_notice(
     return (
         f"{maint_heading(maintenance.get('urgency'), 'Работы завершены')}\n"
         f"{SEP}\n"
-        f"{scope_line(str(maintenance.get('scope', MAINT_SCOPE_ALL)))}\n"
+        f"{scope_line(str(maintenance.get('scope', MAINT_SCOPE_ALL)), str(maintenance.get('scope_label') or ''))}\n"
         f"• Время: <code>{html_escape(format_datetime_short(ended_at))}</code> ({html_escape(TZ_NAME)})\n"
         f"• Ответственный: <b>{html_escape(author)}</b>\n\n"
         "Спасибо за терпение 🙌"
@@ -191,7 +193,7 @@ def maintenance_scheduled_soon_notice(scheduled: dict[str, Any], remaining_min: 
     return (
         f"{maint_heading('planned', f'Начнутся через {humanize_until(remaining_min)}')}\n"
         f"{SEP}\n"
-        f"{scope_line(str(scheduled.get('scope', MAINT_SCOPE_ALL)))}\n"
+        f"{scope_line(str(scheduled.get('scope', MAINT_SCOPE_ALL)), str(scheduled.get('scope_label') or ''))}\n"
         f"• Начало: <code>{html_escape(format_datetime_short(start_at) if start_at else '-')}</code> ({html_escape(TZ_NAME)})\n"
         f"• Окончание: <code>{html_escape(format_datetime_short(end_at) if end_at else '-')}</code> ({html_escape(TZ_NAME)})\n"
         f"• Ответственный: <b>{html_escape(str(author))}</b>"
@@ -203,7 +205,7 @@ def maintenance_scheduled_cancel_notice(scheduled: dict[str, Any]) -> str:
     return (
         f"{maint_heading('planned', 'Запланированные работы отменены')}\n"
         f"{SEP}\n"
-        f"{scope_line(str(scheduled.get('scope', MAINT_SCOPE_ALL)))}\n"
+        f"{scope_line(str(scheduled.get('scope', MAINT_SCOPE_ALL)), str(scheduled.get('scope_label') or ''))}\n"
         f"• Планировались на: <code>{html_escape(format_datetime_short(start_at) if start_at else '-')}</code> ({html_escape(TZ_NAME)})\n\n"
         "Ранее анонсированные работы проводиться не будут."
     )
@@ -215,7 +217,7 @@ def maintenance_scheduled_start_notice(scheduled: dict[str, Any]) -> str:
     return (
         f"{maint_heading('planned', 'Работы начались')}\n"
         f"{SEP}\n"
-        f"{scope_line(str(scheduled.get('scope', MAINT_SCOPE_ALL)))}\n"
+        f"{scope_line(str(scheduled.get('scope', MAINT_SCOPE_ALL)), str(scheduled.get('scope_label') or ''))}\n"
         f"• Плановое окончание: <code>{html_escape(format_datetime_short(end_at) if end_at else '-')}</code> ({html_escape(TZ_NAME)})\n"
         f"• Ответственный: <b>{html_escape(str(author))}</b>"
     )

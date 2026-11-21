@@ -15,6 +15,11 @@ REMOVED_MODULE_PREFIXES = (
     "app.handlers",
     "app.services",
     "app.monitoring.remote",
+    "app.monitoring.system",
+    "app.monitoring.tls",
+    "app.monitoring.remnawave",
+    "app.monitoring.docker",
+    "app.monitoring.fail2ban",
 )
 REMOVED_ROOT_MODULES = {
     "app.help_content",
@@ -122,6 +127,15 @@ def test_removed_catch_all_namespaces_are_not_reintroduced() -> None:
         if target in REMOVED_ROOT_MODULES or target.startswith(REMOVED_MODULE_PREFIXES)
     }
     assert illegal == set()
+
+
+def test_monitoring_does_not_import_host_probe_or_process_apis() -> None:
+    forbidden = {"socket", "ssl", "subprocess", "psutil", "dns", "docker", "asyncssh", "paramiko"}
+    assert not {
+        (source, target)
+        for source, target in _import_edges()
+        if source.startswith("app.monitoring.") and target.split(".", 1)[0] in forbidden
+    }
 
 
 def test_internal_modules_have_no_direct_import_cycles() -> None:

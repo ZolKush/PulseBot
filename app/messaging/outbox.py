@@ -9,7 +9,7 @@ from typing import Any
 from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TimedOut
 
 from ..config import logger
-from ..storage import finalize_outbox_event, get_outbox_event, get_user_meta_copy, mutate_outbox_event, outbox_snapshot
+from ..storage import get_outbox_event, get_user_meta_copy, mutate_outbox_event, outbox_snapshot
 from .outbox_redrive import redrive_outbox_dead_letters as _redrive_outbox_dead_letters
 from .outbox_state import (
     ACTIVE_RECIPIENT_STATUSES,
@@ -45,19 +45,7 @@ async def _finalize_if_done(source: str, event_id: str, event: dict[str, Any] | 
         status in ACTIVE_RECIPIENT_STATUSES or status == DEAD_LETTER_STATUS for status in statuses
     ):
         return False
-    success = all(status == "delivered" for status in statuses)
-    completion = event.get("completion")
-    if (
-        not success
-        and isinstance(completion, dict)
-        and completion.get("type") == "fail2ban_cursor"
-        and any(status == "delivered" for status in statuses)
-    ):
-        # A terminal recipient cannot be retried usefully. Advancing after at
-        # least one real delivery prevents duplicate digests for reachable
-        # admins; if nobody received it, the old cursor is deliberately kept.
-        success = True
-    await finalize_outbox_event(source, event_id, success=success)
+    await mutate_outbox_event(source, event_id, lambda _: None)
     return True
 
 
@@ -74,6 +62,11 @@ async def process_outbox(bot) -> int:
             payload = event.get("payload")
             recipients = event.get("recipients")
             if not event_id or not isinstance(payload, dict) or not isinstance(recipients, dict):
+                continue
+            # Pre-upgrade queues may contain notifications from retired probes.
+            kind = str(event.get("kind", ""))
+            if source == "important" and (kind == "fail2ban_daily_digest" or kind.startswith("tls_certificate_")):
+                await mutate_outbox_event(source, event_id, lambda _: None)
                 continue
             if await _finalize_if_done(source, event_id, event):
                 continue

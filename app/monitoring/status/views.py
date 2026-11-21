@@ -1,185 +1,109 @@
-import re
+"""Telegram screens for the current Zabbix inventory, problems and latest values."""
 
-from ...bot.ui import (
-    SEP,
-    clip_html_message,
-    extract_percent,
-    footer_updated,
-    header,
-    html_escape,
-    metric_line,
-    section,
-    used_total_percent,
-)
-from ..docker.presentation import main_docker_problem_lines
-from .models import StatusSnapshot
-from .summary import dns_detail_line, dns_failure_block, summary_chips_line, tls_failure_block
+from __future__ import annotations
 
+from datetime import datetime
 
-def _normalize_memory_display(raw: str) -> str:
-    return (raw or "").strip() or "н/д"
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from ...bot.ui import btn_back, btn_home, clip_text, pager_row
+from ...config import TZ
+from ..zabbix import Host, Metric, Problem
 
-def _normalize_disk_display(raw: str) -> str:
-    s = (raw or "").strip()
-    if " (" in s:
-        s = s.split(" (", 1)[0].strip()
-    if " mount" in s:
-        s = s.split(" mount", 1)[0].strip()
-    return s or "н/д"
+Screen = tuple[str, InlineKeyboardMarkup]
+HEALTHY = "Все системы работают штатно, проблем не замечено."
+UNAVAILABLE = "Сейчас не удалось получить состояние серверов. Попробуйте обновить статус позже."
+
+_PUBLIC_SEVERITIES = {
+    2: "Предупреждение. В работе сервера замечено отклонение.",
+    3: "Средняя важность. Отдельные функции могут работать с перебоями.",
+    4: "Высокая важность. Возможны существенные перебои в работе сервера.",
+    5: "Критическая проблема. Сервис может быть недоступен.",
+}
+_STAFF_SEVERITIES = ("Не классифицирована", "Информация", "Предупреждение", "Средняя", "Высокая", "Чрезвычайная")
 
 
-def _memory_percent(raw: str) -> int | None:
-    m = re.match(r"\s*([\d.,]+)\s*/\s*([\d.,]+)", raw or "")
-    if not m:
-        return None
-    try:
-        used = float(m.group(1).replace(",", "."))
-        total = float(m.group(2).replace(",", "."))
-    except ValueError:
-        return None
-    return used_total_percent(used, total)
+def _label(value: str, budget: int) -> str:
+    return clip_text(" ".join(value.split()), limit=budget)
 
 
-def _fmt_ufw_list(items: list[str]) -> list[str]:
-    if not items:
-        return ["<code>  —</code>"]
-    out: list[str] = []
-    visible = items[:40]
-    for item in visible:
-        out.append(f"<code>  • {html_escape(item)}</code>")
-    if len(items) > len(visible):
-        out.append(f"<i>  … ещё {len(items) - len(visible)} правил</i>")
-    return out
+def _page(length: int, size: int, requested: int) -> tuple[int, int, slice]:
+    total = max(1, (length + size - 1) // size)
+    page = max(0, min(requested, total - 1))
+    return page, total, slice(page * size, (page + 1) * size)
 
 
-def _ufw_emoji(state: str) -> str:
-    s = (state or "").strip().lower()
-    if s == "active":
-        return "🟢"
-    if s in ("inactive", "disabled"):
-        return "🔴"
-    return "⚠️"
+def _navigation(prefix: str, page: int, total: int) -> list[list[InlineKeyboardButton]]:
+    rows = [pager_row(prefix, page, total)] if total > 1 else []
+    rows.append([InlineKeyboardButton("Обновить", callback_data=f"{prefix}{page}")])
+    return rows
 
 
-def _suffix_updated(text: str) -> str:
-    s = (text or "").strip()
-    if not s:
-        return ""
-    return f" <i>(обновлено {html_escape(s)})</i>"
-
-
-def _format_offline_message(snapshot: StatusSnapshot) -> str:
-    lines: list[str] = []
-    lines.append(header(snapshot.server_flag or "🖥", snapshot.server_label, "🔴 офлайн"))
-    lines.append(SEP)
-    lines.append("🔴 <b>Нода офлайн</b>")
-    if snapshot.last_seen_text:
-        lines.append(f"Последнее обновление: <code>{html_escape(snapshot.last_seen_text)}</code>")
-    lines.append(SEP)
-    lines.append(summary_chips_line(snapshot, ufw_emoji=_ufw_emoji(snapshot.ufw_state)))
-    dns_line = dns_detail_line(snapshot)
-    if dns_line:
-        lines.append(dns_line)
-    lines.extend(dns_failure_block(snapshot))
-    lines.extend(tls_failure_block(snapshot))
-    lines.append("")
-    lines.append(footer_updated(snapshot.now_text))
-    return "\n".join(lines)
-
-
-def _format_metrics_error_message(snapshot: StatusSnapshot) -> str:
-    lines = [
-        header(snapshot.server_flag or "🖥", snapshot.server_label, "⚠️ статус неизвестен"),
-        SEP,
-        "📡 <b>Панель метрик недоступна или вернула неполные данные</b>",
-        f"<i>{html_escape(snapshot.metrics_error or 'неизвестная ошибка')}</i>",
+def host_list(hosts: tuple[Host, ...], requested: int) -> Screen:
+    page, total, portion = _page(len(hosts), 10, requested)
+    rows = [
+        [InlineKeyboardButton(_label(host.name, 60), callback_data=f"status:metrics:{host.id}:0")]
+        for host in hosts[portion]
     ]
-    if snapshot.last_seen_text:
-        lines.append(f"Последнее успешное обновление: <code>{html_escape(snapshot.last_seen_text)}</code>")
-    lines.extend([SEP, summary_chips_line(snapshot, ufw_emoji=_ufw_emoji(snapshot.ufw_state))])
-    dns_line = dns_detail_line(snapshot)
-    if dns_line:
-        lines.append(dns_line)
-    lines.extend(dns_failure_block(snapshot))
-    lines.extend(tls_failure_block(snapshot))
-    lines.extend(["", footer_updated(snapshot.now_text)])
-    return "\n".join(lines)
+    rows.append([InlineKeyboardButton("Проблемы Zabbix", callback_data="status:issues:0")])
+    rows += _navigation("status:hosts:", page, total)
+    rows.append([btn_home()])
+    return f"Узлы Zabbix · {len(hosts)}\nВыберите узел для просмотра метрик.", InlineKeyboardMarkup(rows)
 
 
-def format_status_message(snapshot: StatusSnapshot) -> str:
-    if snapshot.source_mode == "mixed" and snapshot.metrics_error:
-        return clip_html_message(_format_metrics_error_message(snapshot))
-    if snapshot.source_mode == "mixed" and snapshot.node_online is False:
-        return clip_html_message(_format_offline_message(snapshot))
-
-    status_text = ""
-    if snapshot.source_mode == "mixed" and snapshot.node_online is True:
-        status_text = "🟢 онлайн"
-
-    lines: list[str] = []
-    lines.append(header(snapshot.server_flag or "🖥", snapshot.server_label, status_text))
-    lines.append(SEP)
-    lines.append(section("Ресурсы", "📊"))
-
-    mem_display = _normalize_memory_display(snapshot.memory_raw)
-    lines.append(metric_line("RAM", _memory_percent(snapshot.memory_raw), mem_display))
-
-    disk_display = _normalize_disk_display(snapshot.disk_raw)
-    disk_line = metric_line("Диск", extract_percent(snapshot.disk_raw), disk_display)
-    if snapshot.source_mode == "mixed":
-        disk_line += _suffix_updated(snapshot.disk_updated_at_text)
-    lines.append(disk_line)
-
-    lines.append(f"Аптайм: <b>{html_escape(snapshot.uptime_text)}</b>")
-    lines.append(SEP)
-    lines.append(summary_chips_line(snapshot, ufw_emoji=_ufw_emoji(snapshot.ufw_state)))
-
-    dns_line = dns_detail_line(snapshot)
-    if dns_line:
-        lines.append(dns_line)
-
-    ufw_state_text = (snapshot.ufw_state or "н/д").upper()
-    ufw_suffix = _suffix_updated(snapshot.ufw_updated_at_text) if snapshot.source_mode == "mixed" else ""
-    if (snapshot.ufw_state or "").strip().lower() != "active" or ufw_suffix:
-        lines.append(f"🛡 UFW: <b>{html_escape(ufw_state_text)}</b>{ufw_suffix}")
-
-    if snapshot.admin_mode and snapshot.online_users is not None:
-        lines.append(f"👥 Онлайн пользователей: <b>{int(snapshot.online_users)}</b>")
-
-    lines.extend(dns_failure_block(snapshot))
-    lines.extend(tls_failure_block(snapshot))
-
-    problem_lines = (
-        main_docker_problem_lines(snapshot.containers) if snapshot.admin_mode and snapshot.show_containers_block else []
-    )
-    if problem_lines:
-        lines.append("")
-        lines.append(section("Контейнеры — проблемы", "🐳"))
-        lines.extend(problem_lines)
-
-    lines.append("")
-    lines.append(footer_updated(snapshot.now_text))
-
-    return clip_html_message("\n".join(lines))
+def problem_list(hosts: tuple[Host, ...], problems: tuple[Problem, ...], requested: int, *, staff: bool) -> Screen:
+    names = {host.id: host.name for host in hosts}
+    page, total, portion = _page(len(problems), 5, requested)
+    blocks: list[str] = []
+    for issue in problems[portion]:
+        host = _label(names[issue.host_id], 128)
+        status = "Подтверждена" if issue.acknowledged else "Ожидает подтверждения"
+        if staff:
+            lines = [
+                f"{host} · #{issue.event_id}",
+                f"{_STAFF_SEVERITIES[issue.severity]} · {_label(issue.name, 220)}",
+                status,
+            ]
+            if issue.suppressed:
+                lines.append("Подавлена")
+            if issue.cause_eventid != "0":
+                lines.append(f"Симптом проблемы #{issue.cause_eventid}")
+            if issue.comment:
+                lines.append(f"Комментарий: {_label(issue.comment, 220)}")
+        else:
+            lines = [host, _PUBLIC_SEVERITIES[issue.severity], f"Статус: {status.lower()}."]
+            if issue.cause_eventid != "0":
+                lines.append("Связана с другой проблемой.")
+        blocks.append("\n".join(lines))
+    rows = _navigation("status:issues:", page, total)
+    if staff:
+        rows.append([btn_back("status:hosts:0", "К списку узлов")])
+    rows.append([btn_home()])
+    text = "\n\n".join(blocks) if blocks else ("В Zabbix нет открытых проблем." if staff else HEALTHY)
+    return text, InlineKeyboardMarkup(rows)
 
 
-def format_ufw_message(snapshot: StatusSnapshot) -> str:
-    lines: list[str] = []
-    state_text = (snapshot.ufw_state or "н/д").upper()
-    lines.append(
-        f"🛡 <b>UFW — {html_escape(snapshot.server_label)}</b> · {_ufw_emoji(snapshot.ufw_state)} {html_escape(state_text)}"
-    )
-    if snapshot.ufw_updated_at_text:
-        lines.append(f"<i>обновлено {html_escape(snapshot.ufw_updated_at_text)}</i>")
-    lines.append(SEP)
-    if snapshot.admin_mode and (snapshot.ufw_state or "").lower() == "active":
-        lines.append("ALLOW:")
-        lines.extend(_fmt_ufw_list(snapshot.ufw_allow))
-        lines.append("DENY:")
-        lines.extend(_fmt_ufw_list(snapshot.ufw_deny))
-        lines.append("REJECT:")
-        lines.extend(_fmt_ufw_list(snapshot.ufw_reject))
-    else:
-        lines.append("• Дополнительные правила UFW недоступны.")
-    return clip_html_message("\n".join(lines))
+def metric_list(host: Host, metrics: tuple[Metric, ...], requested: int) -> Screen:
+    page, total, portion = _page(len(metrics), 5, requested)
+    blocks = [f"{_label(host.name, 128)} · последние значения Zabbix"]
+    for metric in metrics[portion]:
+        label = _label(metric.name, 100)
+        key = _label(metric.key, 230)
+        value = "нет данных" if metric.value is None else _label(f"{metric.value} {metric.units}", 190)
+        reading = f"{label}\n{key}\n{value}" if label and label != key else f"{key}\n{value}"
+        if metric.value is not None and metric.lastclock:
+            try:
+                stamp = datetime.fromtimestamp(metric.lastclock, TZ)
+                reading += f" · {stamp:%d.%m.%Y %H:%M %Z}"
+            except (OverflowError, OSError, ValueError):
+                reading += " · время измерения неизвестно"
+        blocks.append(reading)
+    if not metrics:
+        blocks.append("Для этого узла в Zabbix нет доступных метрик из списка мониторинга.")
+    rows = _navigation(f"status:metrics:{host.id}:", page, total)
+    rows.append([btn_back("status:hosts:0", "К списку узлов"), btn_home()])
+    return "\n\n".join(blocks), InlineKeyboardMarkup(rows)
+
+
+def notice(text: str, retry: str) -> Screen:
+    return text, InlineKeyboardMarkup([[InlineKeyboardButton("Обновить", callback_data=retry)], [btn_home()]])

@@ -8,9 +8,11 @@ from datetime import date, timedelta
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from .policy import MAINT_SCOPE_ALL, MAX_MAINT_HOURS, server_items
+from ..bot.ui import clip_text
+from .policy import MAINT_SCOPE_ALL, MAX_MAINT_HOURS
 
 CAL_NOOP = "maint:cal:noop"
+_SCOPE_PAGE_SIZE = 10
 
 _RU_MONTHS = [
     "",
@@ -30,12 +32,23 @@ _RU_MONTHS = [
 _RU_WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
 
-def scope_kb() -> InlineKeyboardMarkup:
+def scope_kb(servers: dict[str, str], page: int = 0) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [InlineKeyboardButton("🌐 Общие техработы", callback_data=f"maint:scope:{MAINT_SCOPE_ALL}")]
     ]
-    for key, label in server_items():
-        rows.append([InlineKeyboardButton(f"🖥 {label}", callback_data=f"maint:scope:{key}")])
+    ordered = sorted(servers.items(), key=lambda host: (host[1].casefold(), host[0]))
+    last_page = max(0, (len(ordered) - 1) // _SCOPE_PAGE_SIZE)
+    page = max(0, min(page, last_page))
+    start = page * _SCOPE_PAGE_SIZE
+    for key, label in ordered[start : start + _SCOPE_PAGE_SIZE]:
+        rows.append([InlineKeyboardButton(f"🖥 {clip_text(label, limit=60)}", callback_data=f"maint:scope:{key}")])
+    navigation: list[InlineKeyboardButton] = []
+    if page > 0:
+        navigation.append(InlineKeyboardButton("◀ Назад", callback_data=f"maint:scope:page:{page - 1}"))
+    if page < last_page:
+        navigation.append(InlineKeyboardButton("Далее ▶", callback_data=f"maint:scope:page:{page + 1}"))
+    if navigation:
+        rows.append(navigation)
     rows.append([InlineKeyboardButton("🏠 Меню", callback_data="menu:home")])
     return InlineKeyboardMarkup(rows)
 

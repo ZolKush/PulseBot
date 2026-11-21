@@ -8,7 +8,7 @@ from .config import (
     LOG_JSON,
     LOG_LEVEL,
     OWNER_PASSWORD,
-    REMNAWAVE_METRICS_PASS,
+    ZABBIX_API_TOKEN,
 )
 from .runtime.lock import ALREADY_RUNNING_EXIT_CODE, InstanceAlreadyRunning, SingleInstanceLock
 from .runtime.logging import configure_logging, logger
@@ -19,7 +19,7 @@ def main() -> None:
         level=LOG_LEVEL,
         use_json=LOG_JSON,
         force=True,
-        secrets=(BOT_TOKEN, ADMIN_PASSWORD, OWNER_PASSWORD, REMNAWAVE_METRICS_PASS),
+        secrets=(BOT_TOKEN, ADMIN_PASSWORD, OWNER_PASSWORD, ZABBIX_API_TOKEN),
     )
     lock = SingleInstanceLock(INSTANCE_LOCK_PATH)
     try:

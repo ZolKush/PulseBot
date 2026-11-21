@@ -1,1 +1,1 @@
-"""Server monitoring capabilities and infrastructure adapters."""
+"""Read-only Zabbix integration and Telegram status views."""

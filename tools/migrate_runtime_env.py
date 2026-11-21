@@ -1,16 +1,9 @@
-"""Legacy stage 1: normalize old MaintBot dotenv files before JSON migration.
-
-The intermediate public and secret key sets come from ``app/.env.example`` and
-``app/env.secrets.example``.  Server-specific legacy keys are accepted only so
-they can be discarded after ``migrate_server_inventory.py`` has produced the
-intermediate TOML inventory.  Output files are always created exclusively; this
-tool never overwrites an existing file.  Finish with ``migrate_config_layout.py``;
-MaintBot no longer reads the generated public dotenv or TOML at runtime.
-"""
+"""Separate legacy dotenv settings and credentials before migrating a public env to JSON."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import ntpath
 import os
 import posixpath
@@ -21,6 +14,11 @@ from pathlib import Path
 from typing import TextIO
 
 from dotenv.parser import Binding, parse_stream
+
+if __package__:
+    from .migrate_config_layout import _DISCARDED_KEYS, ConfigMigrationError, _load_json_object
+else:  # Direct execution with python tools/migrate_runtime_env.py
+    from migrate_config_layout import _DISCARDED_KEYS, ConfigMigrationError, _load_json_object
 
 
 class MigrationError(ValueError):
@@ -39,7 +37,7 @@ class MigratedEnv:
     secrets_text: str
 
 
-_MIGRATED_SECRET_KEYS = frozenset({"REMNAWAVE_METRICS_USER", "REMNAWAVE_METRICS_PASS"})
+_RETIRED_SECRET_KEYS = frozenset({"REMNAWAVE_METRICS_USER", "REMNAWAVE_METRICS_PASS"})
 
 _RENAMED_PUBLIC_KEYS = {
     "MESSAGE_CLEANUP_ENABLED": "NAVIGATION_CLEANUP_ENABLED",
@@ -201,16 +199,17 @@ def _derive_data_dir(public_source: dict[str, str]) -> str | None:
     return common_parent
 
 
-def _merge_migrated_secrets(public_source: dict[str, str], secret_source: dict[str, str]) -> dict[str, str]:
-    result = dict(secret_source)
-    for key in _MIGRATED_SECRET_KEYS:
-        public_value = public_source.get(key, "")
-        secret_value = secret_source.get(key, "")
-        if public_value and secret_value and public_value != secret_value:
-            raise MigrationError(f"public/secret env: conflicting values for {key}")
-        if public_value and not secret_value:
-            result[key] = public_value
-    return result
+def _public_template(path: Path) -> EnvDocument:
+    if path.suffix.lower() != ".json":
+        return _read_env(path, source="public template")
+
+    values = _load_json_object(path, source="bot template")
+    lines = []
+    for key, value in values.items():
+        if key != "version":
+            raw = value if isinstance(value, str) else json.dumps(value)
+            lines.append(f"{key}={_encoded(raw)}")
+    return _parse_stream_safely(StringIO("\n".join(lines)), source="public template")
 
 
 def build_migration(
@@ -219,36 +218,29 @@ def build_migration(
     secrets_env: Path,
     public_template: Path,
     secrets_template: Path,
-    server_inventory_file: str,
 ) -> MigratedEnv:
     """Build verified canonical dotenv contents without writing any files."""
 
-    inventory_path = server_inventory_file.strip()
-    if not inventory_path:
-        raise MigrationError("--server-inventory-file must not be empty")
-
     public_source = _read_env(public_env, source="public env")
     secret_source = _read_env(secrets_env, source="secret env")
-    canonical_public = _read_env(public_template, source="public template")
+    canonical_public = _public_template(public_template)
     canonical_secrets = _read_env(secrets_template, source="secret template")
 
     public_keys = set(canonical_public.values)
     secret_keys = set(canonical_secrets.values)
     if public_keys & secret_keys:
         raise MigrationError("canonical templates contain overlapping public and secret keys")
-    if not secret_keys >= _MIGRATED_SECRET_KEYS:
-        raise MigrationError("secret template is missing Remnawave credential keys")
-    if not {"DATA_DIR", "SERVER_INVENTORY_FILE"} <= public_keys:
-        raise MigrationError("public template is missing DATA_DIR or SERVER_INVENTORY_FILE")
-
     allowed_public = (
         public_keys
-        | secret_keys.intersection(_MIGRATED_SECRET_KEYS)
+        | _RETIRED_SECRET_KEYS
+        | _DISCARDED_KEYS
         | set(_RENAMED_PUBLIC_KEYS)
         | set(_DISCARDED_LEGACY_PUBLIC_KEYS)
     )
     _reject_unknown_keys(actual=set(public_source.values), allowed=allowed_public, source="public env")
-    _reject_unknown_keys(actual=set(secret_source.values), allowed=secret_keys, source="secret env")
+    _reject_unknown_keys(
+        actual=set(secret_source.values), allowed=secret_keys | _RETIRED_SECRET_KEYS, source="secret env"
+    )
 
     public_values = dict(canonical_public.values)
     public_values.update({key: value for key, value in public_source.values.items() if key in public_keys})
@@ -260,11 +252,9 @@ def build_migration(
         if configured_data_dir and configured_data_dir != derived_data_dir:
             raise MigrationError("public env: DATA_DIR conflicts with the legacy data path parent")
         public_values["DATA_DIR"] = derived_data_dir
-    public_values["SERVER_INVENTORY_FILE"] = inventory_path
 
-    merged_secret_source = _merge_migrated_secrets(public_source.values, secret_source.values)
     secret_values = dict(canonical_secrets.values)
-    secret_values.update({key: value for key, value in merged_secret_source.items() if key in secret_keys})
+    secret_values.update({key: value for key, value in secret_source.values.items() if key in secret_keys})
 
     return MigratedEnv(
         public_text=_render_template(canonical_public, public_values, source="public env"),
@@ -300,7 +290,6 @@ def migrate_files(
     secrets_template: Path,
     output_public: Path,
     output_secrets: Path,
-    server_inventory_file: str,
 ) -> None:
     """Create both migrated files exclusively, rolling back partial output."""
 
@@ -315,7 +304,6 @@ def migrate_files(
         secrets_env=secrets_env,
         public_template=public_template,
         secrets_template=secrets_template,
-        server_inventory_file=server_inventory_file,
     )
 
     created: list[Path] = []
@@ -334,11 +322,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env", type=Path, default=Path("app/.env"), help="legacy public env input")
     parser.add_argument("--secrets", type=Path, default=Path("app/env.secrets"), help="legacy secret env input")
-    parser.add_argument("--env-template", type=Path, default=Path("app/.env.example"))
+    parser.add_argument("--env-template", type=Path, default=Path("examples/conf/bot.json"))
     parser.add_argument("--secrets-template", type=Path, default=Path("app/env.secrets.example"))
     parser.add_argument("--output-env", type=Path, required=True)
     parser.add_argument("--output-secrets", type=Path, required=True)
-    parser.add_argument("--server-inventory-file", required=True)
     return parser
 
 
@@ -353,13 +340,12 @@ def main() -> int:
             secrets_template=args.secrets_template,
             output_public=args.output_env,
             output_secrets=args.output_secrets,
-            server_inventory_file=args.server_inventory_file,
         )
-    except (MigrationError, OSError) as exc:
+    except (MigrationError, ConfigMigrationError, OSError) as exc:
         parser.error(str(exc))
     print(f"Created intermediate public env: {args.output_env}")
     print(f"Created secret env: {args.output_secrets}")
-    print("Next run tools/migrate_config_layout.py; MaintBot does not read the public env at runtime.")
+    print("Next run python -m tools.migrate_config_layout; MaintBot does not read the public env at runtime.")
     return 0
 
 
