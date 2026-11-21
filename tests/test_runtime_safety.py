@@ -8,11 +8,6 @@ from app.config.secrets import load_required_secrets
 from app.runtime.lock import InstanceAlreadyRunning, SingleInstanceLock
 
 
-def test_legacy_positional_server_settings_are_rejected() -> None:
-    with pytest.raises(ValidationError, match="REMOTE_SERVER_SSH_TARGETS"):
-        AppSettings(REMOTE_SERVER_SSH_TARGETS=["bot@one.example"])
-
-
 def test_invalid_secret_is_not_exposed_in_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     secret = "secret-X"
     path = tmp_path / "secrets.env"
@@ -121,6 +116,7 @@ def test_app_settings_validation_does_not_expose_dotenv_secrets() -> None:
         )
 
     error = str(exc_info.value)
+    assert "REMOTE_SERVER_SSH_TARGETS" in error
     assert secret_marker not in error
     assert "input_value" not in error
 
