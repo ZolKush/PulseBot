@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from functools import partial
 from pathlib import Path
 
 from telegram import Update
@@ -14,12 +15,20 @@ from telegram.ext import (
     TypeHandler,
 )
 
+from ..access.captcha import continue_registration
+from ..captcha.server import CaptchaServer
 from ..config import (
     BOT_TOKEN,
+    CAPTCHA_BIND_HOST,
+    CAPTCHA_ENABLED,
+    CAPTCHA_PORT,
+    CAPTCHA_URL,
     DATA_DIR,
     INSTANCE_LOCK_PATH,
     NAVIGATION_CLEANUP_ENABLED,
     NAVIGATION_RETENTION_HOURS,
+    TURNSTILE_SECRET_KEY,
+    TURNSTILE_SITE_KEY,
     logger,
 )
 from ..messaging.message_cleanup import MessageCleanupStats, MessageTracker, TrackingExtBot
@@ -67,9 +76,20 @@ def build_application() -> Application:
         retention=timedelta(hours=NAVIGATION_RETENTION_HOURS),
     )
     bot = TrackingExtBot(BOT_TOKEN, message_tracker=message_tracker)
+    captcha = None
+    if CAPTCHA_ENABLED:
+        captcha = CaptchaServer(
+            url=CAPTCHA_URL,
+            site_key=TURNSTILE_SITE_KEY,
+            secret_key=TURNSTILE_SECRET_KEY,
+            bot_token=BOT_TOKEN,
+            on_verified=partial(continue_registration, bot),
+        )
 
     async def post_init(application: Application) -> None:
         message_tracker.bind(application.bot_data)
+        if captcha is not None:
+            await captcha.start(CAPTCHA_BIND_HOST, CAPTCHA_PORT)
         if not NAVIGATION_CLEANUP_ENABLED:
             return
         try:
@@ -81,6 +101,12 @@ def build_application() -> Application:
             )
         else:
             _log_message_cleanup(stats, reason="startup")
+
+    async def stop_captcha(application: Application) -> None:
+        nonlocal captcha
+        if captcha is not None:
+            await captcha.close()
+            captcha = None
 
     async def message_cleanup_job(context) -> None:
         try:
@@ -99,6 +125,8 @@ def build_application() -> Application:
         .job_queue(ManagedJobQueue())
         .persistence(build_sqlite_persistence(Path(DATA_DIR) / DATABASE_FILENAME))
         .post_init(post_init)
+        .post_stop(stop_captcha)
+        .post_shutdown(stop_captcha)
         .build()
     )
 

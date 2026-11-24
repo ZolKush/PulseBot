@@ -2,6 +2,9 @@
 !app/
 app/**
 !app/**/*.py
+!app/captcha/static/index.html
+!app/captcha/static/app.css
+!app/captcha/static/app.js
 app/__main__.py
 !app/requirements.txt
 !deploy/

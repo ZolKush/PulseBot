@@ -74,7 +74,7 @@ class SQLiteBackend:
         return self._read_snapshot(read_only=False)
 
     def _read_snapshot(self, *, read_only: bool) -> BackendSnapshot:
-        with contextlib.closing(self._connect(read_only=read_only)) as connection:
+        with contextlib.closing(self.connect(read_only=read_only)) as connection:
             connection.execute("BEGIN")
             try:
                 result = self._load(connection)
@@ -150,7 +150,7 @@ class SQLiteBackend:
         # Validate the whole mutation before acquiring the SQL writer lock.
         for name, data in changes.items():
             build_store_document(name, 1, data)
-        with contextlib.closing(self._connect()) as connection:
+        with contextlib.closing(self.connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             committed = False
             tx_id = ""
@@ -190,7 +190,7 @@ class SQLiteBackend:
     def unit_of_work(self) -> JsonUnitOfWork:
         return JsonUnitOfWork(self)
 
-    def _connect(self, *, read_only: bool = False) -> sqlite3.Connection:
+    def connect(self, *, read_only: bool = False) -> sqlite3.Connection:
         if not self.database_path.is_file():
             raise StorageConflictError(f"SQLite database does not exist: {self.database_path}")
         return self._connect_path(self.database_path, mode="ro" if read_only else "rw")

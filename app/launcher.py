@@ -3,11 +3,13 @@ from __future__ import annotations
 from .config import (
     ADMIN_PASSWORD,
     BOT_TOKEN,
+    CAPTCHA_ENABLED,
     DATA_DIR,
     INSTANCE_LOCK_PATH,
     LOG_JSON,
     LOG_LEVEL,
     OWNER_PASSWORD,
+    TURNSTILE_SECRET_KEY,
     ZABBIX_API_TOKEN,
 )
 from .runtime.lock import ALREADY_RUNNING_EXIT_CODE, InstanceAlreadyRunning, SingleInstanceLock
@@ -19,7 +21,7 @@ def main() -> None:
         level=LOG_LEVEL,
         use_json=LOG_JSON,
         force=True,
-        secrets=(BOT_TOKEN, ADMIN_PASSWORD, OWNER_PASSWORD, ZABBIX_API_TOKEN),
+        secrets=(BOT_TOKEN, ADMIN_PASSWORD, OWNER_PASSWORD, ZABBIX_API_TOKEN, TURNSTILE_SECRET_KEY),
     )
     lock = SingleInstanceLock(INSTANCE_LOCK_PATH)
     try:
@@ -32,7 +34,7 @@ def main() -> None:
         # lock. Imports themselves remain free of filesystem side effects.
         from .storage import initialize_storage
 
-        initialize_storage(DATA_DIR)
+        initialize_storage(DATA_DIR, captcha_enabled=CAPTCHA_ENABLED)
 
         # Import handlers only after the SQLite database has been verified. The
         # application module does not import this launcher, so ``app.main`` can

@@ -1,0 +1,79 @@
+:root {
+  color-scheme: light;
+  --ground: #ecf7fa;
+  --card: #ffffff;
+  --ink: #112d40;
+  --muted: #485e70;
+  --line: #c6dfe6;
+  --accent: #087b80;
+  --surface: #f3f9fb;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #091923;
+  --card: #10242f;
+  --ink: #e3f7fc;
+  --muted: #aec6d2;
+  --line: #304858;
+  --accent: #5bd6cb;
+  --surface: #142d38;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: var(--tg-viewport-stable-height, 100dvh);
+  display: grid;
+  place-items: center;
+  padding: 24px 14px;
+  background: radial-gradient(ellipse at 50% 0%, #039ca52b, transparent 60%), var(--ground);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+main {
+  width: min(100%, 440px);
+  padding: clamp(18px, 5vw, 38px);
+  border-radius: 24px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  box-shadow: 0 18px 64px #08263712;
+}
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 750; font-size: 1.1rem; }
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  background: linear-gradient(130deg, #0060a5, #008782);
+  border-radius: 9px;
+  color: white;
+  font-style: italic;
+}
+h1 { margin: 36px 0 12px; font-size: clamp(1.65rem, 6vw, 2.25rem); line-height: 1.1; }
+p { margin: 0 0 24px; line-height: 1.55; color: var(--muted); }
+section { padding: 16px; border-radius: 14px; background: var(--surface); }
+#widget:not(:empty) { margin-bottom: 12px; }
+#status { font-size: .95rem; line-height: 1.55; }
+#status::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin: 0 9px 2px 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+button {
+  margin-top: 14px;
+  min-height: 44px;
+  padding: 8px 18px;
+  border: 0;
+  border-radius: 10px;
+  background: #006e80;
+  color: white;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 390px) { section { padding: 12px 8px; } }

@@ -17,6 +17,7 @@ from dotenv.parser import parse_stream
 _SECRET_KEYS = {
     "BOT_TOKEN",
     "ZABBIX_API_TOKEN",
+    "TURNSTILE_SECRET_KEY",
     "ADMIN_PASSWORD",
     "OWNER_PASSWORD",
     "REMNAWAVE_METRICS_USER",

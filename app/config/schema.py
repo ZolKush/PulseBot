@@ -5,13 +5,33 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import ValidationError, ValidationInfo, field_validator
+from pydantic import HttpUrl, ValidationError, ValidationInfo, field_validator
 
 from .json_files import JsonConfigError, load_json_object
 from .schema_fields import SettingsFields
 
 
 class AppSettings(SettingsFields):
+    @field_validator("CAPTCHA_URL")
+    @classmethod
+    def _validate_captcha_url(cls, value: str) -> str:
+        if not value:
+            return value
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.port == 0
+            or parsed.path not in {"", "/"}
+            or any(char in value for char in "?#\\")
+            or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value)
+        ):
+            raise ValueError("CAPTCHA_URL must be a dedicated HTTPS origin")
+        # Browsers serialize Origin with a lowercase ASCII host and omit :443.
+        return str(HttpUrl(value)).rstrip("/")
+
     @field_validator("TZ")
     @classmethod
     def _validate_tz(cls, value: str) -> str:
@@ -118,7 +138,9 @@ class BotConfigDocument(AppSettings):
 
 def load_app_settings(path: str | Path) -> AppSettings:
     raw = load_json_object(path, field_name="BOT_CONFIG_FILE")
-    expected = {"version", *AppSettings.model_fields}
+    # Version 1 configurations written before Turnstile remain valid.
+    optional = {"CAPTCHA_ENABLED", "CAPTCHA_URL", "CAPTCHA_BIND_HOST", "CAPTCHA_PORT", "TURNSTILE_SITE_KEY"}
+    expected = {"version", *AppSettings.model_fields} - optional
     missing = sorted(expected - set(raw))
     if missing:
         raise JsonConfigError(f"invalid BOT_CONFIG_FILE {Path(path)}: missing keys: {', '.join(missing)}")

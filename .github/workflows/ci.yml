@@ -35,7 +35,9 @@ jobs:
           assert os.getuid() == 10001
           root = Path("/opt/maintbot/app")
           files = [path for path in root.rglob("*") if path.is_file()]
-          assert all(path.suffix == ".py" or path == root / "requirements.txt" for path in files)
+          assets = {root / "captcha/static" / name for name in ("index.html", "app.css", "app.js")}
+          assert assets <= set(files)
+          assert all(path.suffix == ".py" or path in assets or path == root / "requirements.txt" for path in files)
           assert not (root / "env.secrets").exists()
           assert not Path("/opt/maintbot/data").exists()
           report = initialize_empty_layout("/tmp/maintbot-smoke")

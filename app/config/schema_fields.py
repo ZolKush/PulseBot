@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from .locations import ROOT_DIR
 
@@ -17,6 +19,12 @@ class SettingsFields(BaseModel):
     DATA_DIR: str = str(ROOT_DIR / "data")
 
     ZABBIX_API_URL: str
+    CAPTCHA_ENABLED: bool = False
+    CAPTCHA_URL: str = ""
+    # The Docker template opts into the container interface. Compose publishes only on host loopback.
+    CAPTCHA_BIND_HOST: Literal["127.0.0.1", "0.0.0.0"] = "127.0.0.1"  # nosec B104
+    CAPTCHA_PORT: int = Field(default=8094, ge=1, le=65535)
+    TURNSTILE_SITE_KEY: str = Field(default="", pattern=r"^[a-zA-Z0-9_-]{0,128}$")
 
     MAINT_RESTART_NOTIFY_DELAY_SEC: int = 2
     MAINT_RESTART_REMINDER_INTERVAL_SEC: int = 1800

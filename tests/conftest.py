@@ -49,3 +49,11 @@ def isolated_storage(tmp_path: Path):
 
     storage.initialize_empty_storage_for_tests(tmp_path / "data")
     yield
+
+
+@pytest.fixture
+def captcha_storage(tmp_path: Path):
+    """Initialize the same CAPTCHA tables and activation marker as an enabled bot."""
+    from app import storage
+
+    storage.initialize_storage(tmp_path / "data", create=True, captcha_enabled=True)

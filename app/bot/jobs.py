@@ -10,6 +10,7 @@ from telegram.ext import Application
 from ..access.security import auth_prune_task
 from ..config import (
     AUTH_PRUNE_INTERVAL_SEC,
+    CAPTCHA_ENABLED,
     MAINT_RESTART_NOTIFY_DELAY_SEC,
     MAINT_RESTART_REMINDER_INTERVAL_SEC,
     NAVIGATION_CLEANUP_ENABLED,
@@ -19,11 +20,16 @@ from ..config import (
 )
 from ..maintenance.jobs import maint_restart_notify, maint_schedule_tick
 from ..messaging.outbox import process_outbox_job
+from ..storage import captcha_cleanup
 from ..subscriptions.requests.lifecycle import subscription_lifecycle_job
 from ..tickets.jobs import release_orphaned_tickets
 from .job_queue import ManagedJobQueue
 
 JobCallback = Callable[[Any], Any]
+
+
+async def cleanup_captcha_sessions(context: Any) -> None:
+    await captcha_cleanup()
 
 
 def _register_repeating_jobs(
@@ -70,6 +76,8 @@ def _register_repeating_jobs(
         first=5,
         name="subscription_lifecycle",
     )
+    if CAPTCHA_ENABLED:
+        job_queue.run_repeating(cleanup_captcha_sessions, interval=300, first=5, name="captcha_cleanup")
     if NAVIGATION_CLEANUP_ENABLED:
         job_queue.run_repeating(
             message_cleanup_job,

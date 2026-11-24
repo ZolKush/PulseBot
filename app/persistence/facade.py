@@ -18,6 +18,7 @@ from .aggregate_mapping import (
     user_data_from_uow,
 )
 from .aggregates import ImportantData, UpdateAborted, UserData
+from .captcha import CaptchaStore
 from .errors import PersistenceError
 from .normalization import normalize_outbox
 from .sqlite_backend import SQLiteBackend
@@ -32,6 +33,7 @@ class StorageNotInitializedError(PersistenceError):
 class StorageFacade:
     def __init__(self) -> None:
         self._backend: SQLiteBackend | None = None
+        self._captcha: CaptchaStore | None = None
         self._data_dir: Path | None = None
         self._user = UserData()
         self._important = ImportantData()
@@ -39,7 +41,7 @@ class StorageFacade:
         self._update_lock: asyncio.Lock | None = None
         self._publish_lock = threading.RLock()
 
-    def initialize(self, data_dir: Path | str, *, create: bool = False) -> int:
+    def initialize(self, data_dir: Path | str, *, create: bool = False, captcha_enabled: bool | None = None) -> int:
         backend = SQLiteBackend(data_dir)
         if create and not backend.exists():
             from .bootstrap import initialize_empty_layout
@@ -49,7 +51,14 @@ class StorageFacade:
             user = user_data_from_uow(uow)
             important = important_data_from_uow(uow)
             revision = uow.current_snapshot.revision
+        captcha = None
+        if captcha_enabled is not None:
+            store = CaptchaStore(backend.connect)
+            store.initialize(user.authorized_users.keys(), enabled=captcha_enabled)
+            if captcha_enabled:
+                captcha = store
         with self._publish_lock:
+            self._captcha = captcha
             self._backend = backend
             self._data_dir = backend.data_root
             self._user = user
@@ -57,6 +66,11 @@ class StorageFacade:
             self._revision = revision
             self._update_lock = None
         return revision
+
+    def captcha(self) -> CaptchaStore:
+        if self._captcha is None:
+            raise StorageNotInitializedError("CAPTCHA storage is inactive")
+        return self._captcha
 
     def is_initialized(self) -> bool:
         return self._backend is not None

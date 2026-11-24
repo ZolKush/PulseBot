@@ -11,6 +11,7 @@ dependencies = [
     "python-telegram-bot[job-queue]==22.8",
     "python-dotenv==1.2.3",
     "httpx==0.28.1",
+    "h11==0.16.0",
     "openpyxl==3.1.5",
     "pydantic==2.13.5",
     "tzdata==2026.3",
@@ -34,6 +35,9 @@ maintbot = "app.launcher:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]
+
+[tool.setuptools.package-data]
+"app.captcha" = ["static/index.html", "static/app.css", "static/app.js"]
 
 [tool.ruff]
 line-length = 120

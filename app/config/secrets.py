@@ -6,7 +6,7 @@ from pathlib import Path
 from dotenv.parser import parse_stream
 from pydantic import BaseModel, ConfigDict, ValidationError, ValidationInfo, field_validator, model_validator
 
-_SECRET_KEYS = ("BOT_TOKEN", "ADMIN_PASSWORD", "OWNER_PASSWORD", "ZABBIX_API_TOKEN")
+_SECRET_KEYS = ("BOT_TOKEN", "ADMIN_PASSWORD", "OWNER_PASSWORD", "ZABBIX_API_TOKEN", "TURNSTILE_SECRET_KEY")
 
 
 class SecretSettings(BaseModel):
@@ -16,6 +16,7 @@ class SecretSettings(BaseModel):
     ADMIN_PASSWORD: str
     OWNER_PASSWORD: str
     ZABBIX_API_TOKEN: str
+    TURNSTILE_SECRET_KEY: str = ""
 
     @field_validator("BOT_TOKEN", "ZABBIX_API_TOKEN", mode="before")
     @classmethod

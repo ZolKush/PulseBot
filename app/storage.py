@@ -25,15 +25,18 @@ from .persistence.operations import (
 _FACADE = StorageFacade()
 
 
-def initialize_storage(data_dir: Path | str = DATA_DIR, *, create: bool = False) -> int:
+def initialize_storage(
+    data_dir: Path | str = DATA_DIR, *, create: bool = False, captcha_enabled: bool | None = None
+) -> int:
     """Open SQLite and let its transaction journal recover interrupted writes.
 
     Production must leave ``create`` false: an absent database is a deployment
     error and must be handled by the explicit migration CLI. Tests may create
-    a fresh empty layout in an isolated temporary directory.
+    a fresh empty layout in an isolated temporary directory. Only bot startup
+    declares whether CAPTCHA is active. Offline maintenance leaves its state alone.
     """
 
-    return _FACADE.initialize(data_dir, create=create)
+    return _FACADE.initialize(data_dir, create=create, captcha_enabled=captcha_enabled)
 
 
 def initialize_empty_storage_for_tests(data_dir: Path | str) -> int:
@@ -50,6 +53,26 @@ def storage_data_dir() -> Path:
 
 def storage_revision() -> int:
     return _FACADE.revision()
+
+
+async def captcha_allowed(user_id: int) -> bool:
+    return await _FACADE.captcha().allowed(user_id)
+
+
+async def captcha_session(user_id: int) -> str:
+    return await _FACADE.captcha().session(user_id)
+
+
+async def captcha_claim(user_id: int, session: str, token: str) -> bool:
+    return await _FACADE.captcha().claim(user_id, session, token)
+
+
+async def captcha_finish(user_id: int, session: str, token: str, *, success: bool) -> bool:
+    return await _FACADE.captcha().finish(user_id, session, token, success=success)
+
+
+async def captcha_cleanup() -> None:
+    await _FACADE.captcha().cleanup()
 
 
 update_user_data = _FACADE.update_user_data
@@ -134,6 +157,11 @@ __all__ = [
     "UserData",
     "append_audit_entry",
     "authorized_users_snapshot",
+    "captcha_allowed",
+    "captcha_claim",
+    "captcha_cleanup",
+    "captcha_finish",
+    "captcha_session",
     "enqueue_important_outbox",
     "enqueue_user_outbox",
     "get_active_maintenance",

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Проверка регистрации · ZeroNet</title>
+  <link rel="stylesheet" href="/app.css">
+  <script async id="telegram-sdk" src="https://telegram.org/js/telegram-web-app.js?65"></script>
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <main>
+    <div class="brand"><span class="brand-mark" aria-hidden="true">Z</span>ZeroNet</div>
+    <h1>Проверка регистрации</h1>
+    <p>Подтвердите, что вы человек, чтобы продолжить регистрацию в боте.</p>
+    <section aria-label="Проверка Cloudflare">
+      <div id="widget" data-sitekey="{{SITE_KEY}}"></div>
+      <div id="status" role="status" aria-live="polite">Подключаем проверку…</div>
+      <button type="button" id="retry" hidden>Попробовать снова</button>
+    </section>
+    <noscript>Для проверки откройте эту страницу в Telegram с включённым JavaScript.</noscript>
+  </main>
+</body>
+</html>

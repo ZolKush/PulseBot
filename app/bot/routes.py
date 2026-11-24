@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler
+from telegram import Update
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, TypeHandler
 
+from ..access.captcha import captcha_guard, cmd_privacy
 from ..access.commands import cmd_auth, cmd_help, cmd_logout, cmd_owner, cmd_start
 from ..access.request_handlers import access_request_cb, access_review_cb
 from ..administration.profile_handlers import (
@@ -13,6 +15,7 @@ from ..administration.profile_handlers import (
     administration_staff_title_menu_cb,
 )
 from ..administration.settings_handlers import administration_service_settings_cb
+from ..config import CAPTCHA_ENABLED
 from ..maintenance.lifecycle import (
     maint_cancel_end_cb,
     maint_end_cb,
@@ -57,9 +60,13 @@ from .navigation import cancel
 
 
 def _register_access_routes(application: Application) -> None:
+    if CAPTCHA_ENABLED:
+        application.add_handler(TypeHandler(Update, captcha_guard), group=-90)
     application.add_handler(CommandHandler("start", cmd_start))
     application.add_handler(CommandHandler("menu", cmd_start))
     application.add_handler(CommandHandler("help", cmd_help))
+    application.add_handler(CommandHandler("support", cmd_help))
+    application.add_handler(CommandHandler("privacy", cmd_privacy))
     application.add_handler(CommandHandler("auth", cmd_auth))
     application.add_handler(CommandHandler("login", cmd_auth))
     application.add_handler(CommandHandler("logout", cmd_logout))
@@ -189,6 +196,7 @@ def _register_menu_routes(application: Application) -> None:
     application.add_handler(CommandHandler("cancel", cancel))
     application.add_handler(CallbackQueryHandler(menu_home_cb, pattern=r"^menu:home$"))
     application.add_handler(CallbackQueryHandler(cmd_help, pattern=r"^menu:help$"))
+    application.add_handler(CallbackQueryHandler(cmd_privacy, pattern=r"^menu:privacy$"))
     application.add_handler(CallbackQueryHandler(cmd_health, pattern=r"^menu:status$", block=False))
     application.add_handler(CallbackQueryHandler(subscription_show, pattern=r"^menu:subscription$"))
 

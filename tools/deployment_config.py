@@ -45,6 +45,7 @@ def docker_configuration(config_dir: Path, *, template: Path) -> dict[str, Any]:
     return {
         **defaults,
         **original,
+        "CAPTCHA_BIND_HOST": defaults["CAPTCHA_BIND_HOST"],
         "DATA_DIR": "/var/lib/maintbot",
         "INSTANCE_LOCK_PATH": "",
         "PTB_PERSISTENCE_PATH": "",

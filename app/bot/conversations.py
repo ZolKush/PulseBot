@@ -19,6 +19,8 @@ _NAVIGATION_COMMANDS = frozenset(
         "start",
         "menu",
         "help",
+        "support",
+        "privacy",
         "auth",
         "login",
         "logout",
@@ -62,7 +64,7 @@ class NavigableConversationHandler(ConversationHandler):
         return True
 
 
-def _navigation_command(update: Update) -> str | None:
+def navigation_command(update: Update) -> str | None:
     message = update.effective_message
     text = str(message.text or "").strip() if message else ""
     if not text.startswith("/"):
@@ -75,7 +77,7 @@ def _is_navigation_update(
     conversations: list[NavigableConversationHandler],
     callback_handlers: list[CallbackQueryHandler],
 ) -> bool:
-    command = _navigation_command(update)
+    command = navigation_command(update)
     if command in _NAVIGATION_COMMANDS:
         return True
     data = update.callback_query.data if update.callback_query else None
@@ -87,7 +89,7 @@ def _is_navigation_update(
 
 
 def _navigation_trigger(update: Update) -> str:
-    command = _navigation_command(update)
+    command = navigation_command(update)
     if command:
         return f"command:{command}"
     data = update.callback_query.data if update.callback_query else None
