@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 
 from .metric_keys import METRIC_PATTERNS, metric_family
-from .models import Host, Metric, Problem
+from .models import Host, HostOrigin, Metric, Problem
 
 _MAX_RESPONSE = 8 * 1024 * 1024
 
@@ -52,6 +52,23 @@ def _flag(row: dict, key: str) -> bool:
     if value not in (0, 1):
         raise ZabbixError(f"Invalid Zabbix flag {key}")
     return bool(value)
+
+
+def _monitored_trigger_hosts(trigger: dict, host_ids: set[str]) -> set[str]:
+    # Reading explicit statuses in one request distinguishes a disabled check
+    # from a trigger missing due to a permission change or incomplete response.
+    if _flag(trigger, "status"):
+        return set()
+    items = _rows(trigger.get("items"))
+    hosts = _rows(trigger.get("hosts"))
+    if not items or not hosts:
+        raise ZabbixError("Incomplete Zabbix trigger relations")
+    if any(_flag(item, "status") for item in items) or any(_flag(host, "status") for host in hosts):
+        return set()
+    members = {_id(host, "hostid") for host in hosts} & host_ids
+    if not members:
+        raise ZabbixError("Cannot associate active Zabbix problem with a host")
+    return members
 
 
 class ZabbixClient:
@@ -105,6 +122,36 @@ class ZabbixClient:
             raise ZabbixError("Invalid Zabbix API version")
         return version
 
+    async def lookup_host(self, visible_name: str) -> tuple[HostOrigin, ...]:
+        rows = await self._request(
+            "host.get",
+            {
+                "filter": {"name": [visible_name]},
+                "output": ["hostid", "host", "name", "status", "flags"],
+                "selectHostGroups": ["name"],
+            },
+        )
+        matches = []
+        for row in rows:
+            name = _text(row, "name")
+            if name != visible_name:
+                continue
+            flags = _number(row, "flags")
+            if flags not in (0, 4):
+                raise ZabbixError("Invalid Zabbix host origin")
+            groups = tuple(sorted(_text(group, "name") for group in _rows(row.get("hostgroups"))))
+            matches.append(
+                HostOrigin(
+                    id=_id(row, "hostid"),
+                    name=name,
+                    technical_name=_text(row, "host"),
+                    enabled=not _flag(row, "status"),
+                    discovered=flags == 4,
+                    groups=groups,
+                )
+            )
+        return tuple(matches)
+
     async def check_trigger_access(self, host_id: str) -> None:
         # problem.get can legitimately return no active events. Exercise
         # trigger.get even then so the first real incident can be mapped.
@@ -138,12 +185,17 @@ class ZabbixClient:
             return ()
         trigger_ids = sorted({_id(row, "objectid") for row in rows})
         triggers = await self._request(
-            "trigger.get", {"triggerids": trigger_ids, "output": ["triggerid"], "selectHosts": ["hostid"]}
+            "trigger.get",
+            {
+                "triggerids": trigger_ids,
+                "output": ["triggerid", "status"],
+                "selectHosts": ["hostid", "status"],
+                "selectItems": ["status"],
+            },
         )
-        affected = {
-            _id(trigger, "triggerid"): {_id(host, "hostid") for host in _rows(trigger.get("hosts"))} & host_ids
-            for trigger in triggers
-        }
+        affected = {_id(trigger, "triggerid"): _monitored_trigger_hosts(trigger, host_ids) for trigger in triggers}
+        if affected.keys() != set(trigger_ids):
+            raise ZabbixError("Incomplete Zabbix trigger data")
         problems = []
         for row in rows:
             severity = _number(row, "severity")
@@ -153,9 +205,9 @@ class ZabbixClient:
             cause = _number(row, "cause_eventid", nullable=True)
             if _number(row, "r_eventid", nullable=True) or (not staff and (severity < 2 or suppressed)):
                 continue
-            members = affected.get(_id(row, "objectid"))
+            members = affected[_id(row, "objectid")]
             if not members:
-                raise ZabbixError("Cannot associate active Zabbix problem with a host")
+                continue
             comment = ""
             if staff:
                 messages = (_text(update, "message").strip() for update in _rows(row.get("acknowledges")))

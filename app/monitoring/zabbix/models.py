@@ -8,6 +8,14 @@ class Host:
 
 
 @dataclass(frozen=True)
+class HostOrigin(Host):
+    technical_name: str
+    enabled: bool
+    discovered: bool
+    groups: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Problem:
     host_id: str
     event_id: str

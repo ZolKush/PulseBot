@@ -1,6 +1,8 @@
-"""Print a shareable Zabbix inventory report using the bot's configured API access."""
+"""Inspect the inventory using the bot's configured Zabbix API access."""
 
+import argparse
 import asyncio
+import json
 import sys
 from collections import defaultdict
 
@@ -31,14 +33,31 @@ async def inspect(client: ZabbixClient) -> None:
     print("Чтение host.get, problem.get, trigger.get и item.get доступно.")
 
 
+async def inspect_host(client: ZabbixClient, visible_name: str) -> None:
+    matches = await client.lookup_host(visible_name)
+    if not matches:
+        print("Среди узлов, видимых токену бота, точного совпадения нет.")
+    for host in matches:
+        print(f"Узел Zabbix #{host.id}")
+        print(f"Отображаемое имя: {json.dumps(host.name, ensure_ascii=False)}")
+        print(f"Техническое имя: {json.dumps(host.technical_name, ensure_ascii=False)}")
+        print("Происхождение: обнаружен через LLD" if host.discovered else "Происхождение: обычный узел")
+        print("Мониторинг включён" if host.enabled else "Мониторинг отключён")
+        print(f"Группы: {json.dumps(host.groups, ensure_ascii=False)}")
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Диагностика инвентаря Zabbix с правами бота")
+    parser.add_argument("--host", metavar="ИМЯ", help="Найти узел по точному отображаемому имени и вывести его группы")
+    args = parser.parse_args()
     try:
         from ..config import ZABBIX_API_TOKEN, ZABBIX_API_URL
     except (OSError, RuntimeError, ValueError):
         print("Не удалось загрузить настройки бота. Проверьте bot.json и env.secrets.", file=sys.stderr)
         return 1
     try:
-        asyncio.run(inspect(ZabbixClient(ZABBIX_API_URL, ZABBIX_API_TOKEN)))
+        client = ZabbixClient(ZABBIX_API_URL, ZABBIX_API_TOKEN)
+        asyncio.run(inspect(client) if args.host is None else inspect_host(client, args.host))
     except ZabbixError as exc:
         print(f"Проверка Zabbix не завершена: {exc}", file=sys.stderr)
         return 1

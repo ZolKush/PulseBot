@@ -44,7 +44,14 @@ async def test_problem_updates_are_reflected_on_refresh_and_private_data_is_staf
     results = {
         "host.get": [{"hostid": "19", "name": "Server A"}, {"hostid": "22", "name": "Server B"}],
         "problem.get": [event],
-        "trigger.get": [{"triggerid": "25", "hosts": [{"hostid": "19"}, {"hostid": "22"}]}],
+        "trigger.get": [
+            {
+                "triggerid": "25",
+                "status": "0",
+                "hosts": [{"hostid": "19", "status": "0"}, {"hostid": "22", "status": "0"}],
+                "items": [{"status": "0"}],
+            }
+        ],
     }
     client, calls = mock_client(results)
     hosts = await client.hosts()
@@ -55,6 +62,13 @@ async def test_problem_updates_are_reflected_on_refresh_and_private_data_is_staf
     assert params["severities"] == [2, 3, 4, 5]
     assert params["suppressed"] is False and "symptom" not in params and params["recent"] is False
     assert "name" not in params["output"] and "selectAcknowledges" not in params
+    assert calls[2][1] == {
+        "triggerids": ["25"],
+        "output": ["triggerid", "status"],
+        "selectHosts": ["hostid", "status"],
+        "selectItems": ["status"],
+    }
+    assert await client.problems(hosts[1:]) == (Problem("22", "17", 2, False),)
 
     event.update(acknowledged="1", severity="4", suppressed="1")
     assert await client.problems(hosts) == ()
@@ -74,7 +88,52 @@ async def test_problem_updates_are_reflected_on_refresh_and_private_data_is_staf
 
 
 @pytest.mark.asyncio
-async def test_incomplete_inventory_or_unmappable_problem_raises():
+@pytest.mark.parametrize("staff", [False, True])
+async def test_only_events_for_currently_monitored_triggers_are_shown(staff):
+    host = {"hostid": "1", "status": "0"}
+    monitored = {"triggerid": "10", "status": "0", "hosts": [host], "items": [{"status": "0"}]}
+    triggers = [
+        monitored,
+        {**monitored, "triggerid": "11", "status": "1"},
+        {**monitored, "triggerid": "12", "items": [{"status": "0"}, {"status": "1"}]},
+        {**monitored, "triggerid": "13", "hosts": [host, {"hostid": "2", "status": "1"}]},
+    ]
+    problems = [
+        {
+            "eventid": str(i + 1),
+            "objectid": trigger["triggerid"],
+            "acknowledged": "1",
+            "severity": "3",
+            "suppressed": "0",
+            "cause_eventid": "0",
+            "r_eventid": "0",
+            "name": "Check",
+            "acknowledges": [],
+        }
+        for i, trigger in enumerate(triggers)
+    ]
+    client, _ = mock_client({"problem.get": problems, "trigger.get": triggers})
+    hosts = (Host("1", "Server A"),)
+    assert [problem.event_id for problem in await client.problems(hosts, staff=staff)] == ["1"]
+    monitored["status"] = "1"
+    assert await client.problems(hosts, staff=staff) == ()
+    monitored["status"] = "0"
+    assert [problem.event_id for problem in await client.problems(hosts, staff=staff)] == ["1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "triggers",
+    [
+        [],
+        [{"triggerid": "25", "status": "0", "items": [], "hosts": [{"hostid": "1", "status": "0"}]}],
+        [{"triggerid": "25", "status": "0", "items": [{"status": "0"}], "hosts": []}],
+        [{"triggerid": "25", "status": "0", "items": [{"status": "0"}], "hosts": [{"hostid": "2", "status": "0"}]}],
+        [{"triggerid": "25", "status": "0", "items": [{}], "hosts": [{"hostid": "1", "status": "0"}]}],
+        [{"triggerid": "25", "hosts": [{"hostid": "1", "status": "0"}], "items": [{"status": "0"}]}],
+    ],
+)
+async def test_incomplete_inventory_or_unmappable_problem_raises(triggers):
     client, calls = mock_client(
         {
             "problem.get": [
@@ -88,7 +147,7 @@ async def test_incomplete_inventory_or_unmappable_problem_raises():
                     "r_eventid": "0",
                 }
             ],
-            "trigger.get": [],
+            "trigger.get": triggers,
         }
     )
     with pytest.raises(ZabbixError):
