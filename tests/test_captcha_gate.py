@@ -33,7 +33,8 @@ async def test_start_opens_bound_mini_app_then_resumes_admission(captcha_storage
     markup = update.effective_message.reply_text.await_args.kwargs["reply_markup"].inline_keyboard
     button = markup[0][0]
     assert button.text == "Пройти проверку"
-    assert markup[2][0].callback_data == "menu:privacy"
+    assert len(markup) == 2
+    assert markup[1][0].callback_data == "menu:privacy"
     session = parse_qs(urlsplit(button.web_app.url).query)["session"][0]
     assert storage.get_user_meta_copy(42) is None
     assert not await storage.captcha_allowed(42)
@@ -52,12 +53,17 @@ async def test_start_opens_bound_mini_app_then_resumes_admission(captcha_storage
     ("command", "callback"),
     [
         ("/menu", None),
+        ("/support", None),
+        ("/help", None),
+        ("/privacy", None),
         ("/auth password", None),
         ("ответ в открытом диалоге", None),
         ("", "access:request"),
         ("", "subscription:trial"),
         ("", "subscription:buyconfirm"),
         ("", "menu:status"),
+        ("", "menu:help"),
+        ("", "menu:ticket"),
     ],
 )
 @pytest.mark.asyncio
@@ -91,36 +97,15 @@ async def test_legacy_account_keeps_access_through_upgrade(isolated_storage: Non
 
 
 @pytest.mark.asyncio
-async def test_public_support_and_privacy_before_verification(captcha_storage: None) -> None:
-    await storage.update_user_data(lambda data: data.product_settings.update(support_email="team@example.org"))
-    update, context = _callback_update(42, "menu:help")
-    with pytest.raises(ApplicationHandlerStop):
-        await captcha.captcha_guard(update, context)
-    assert "team@example.org" in update.effective_message.reply_text.await_args.args[0]
-    assert "тикет" not in update.effective_message.reply_text.await_args.args[0]
-    update.callback_query.data = "menu:privacy"
-    with pytest.raises(ApplicationHandlerStop):
-        await captcha.captcha_guard(update, context)
-    callback_reply = update.effective_message.reply_text.await_args
-    update.callback_query = None
-    update.effective_message.text = "/privacy"
+async def test_privacy_button_before_verification(captcha_storage: None) -> None:
+    update, context = _callback_update(42, "menu:privacy")
     with pytest.raises(ApplicationHandlerStop):
         await captcha.captcha_guard(update, context)
     reply = update.effective_message.reply_text.await_args
-    assert callback_reply == reply
     assert "Turnstile" in reply.args[0]
+    assert "/support" not in reply.args[0]
     assert reply.kwargs["reply_markup"].inline_keyboard[0][0].url == "https://telegram.org/privacy-tpa"
     assert storage.get_user_meta_copy(42) is None
-
-
-@pytest.mark.asyncio
-async def test_support_without_configured_email_explains_how_to_retry(captcha_storage: None) -> None:
-    update, context = _callback_update(42, "menu:ticket")
-    with pytest.raises(ApplicationHandlerStop):
-        await captcha.captcha_guard(update, context)
-    text = update.effective_message.reply_text.await_args.args[0]
-    assert "/start" in text and "пока не указала" in text
-    assert "тикет" not in text
 
 
 @pytest.mark.asyncio

@@ -182,7 +182,7 @@ MaintBot учитывает оплаты и сроки, но не проверя
 
 Устройство пользователя должно загружать виджет с `challenges.cloudflare.com`, а сервер — обращаться
 к Siteverify по HTTPS. При сетевой ошибке доступ остаётся закрытым. Пользователь может повторить попытку
-или обратиться в поддержку из чата. Режим Managed задаётся в Cloudflare. Подпись и свежесть данных
+через `/start`. Режим Managed задаётся в Cloudflare. Подпись и свежесть данных
 проверяет сам бот. [Документация Turnstile](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/)
 и [документация Mini Apps](https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app).
 
@@ -422,8 +422,7 @@ docker compose up -d
 | Команда | Действие |
 | --- | --- |
 | `/start`, `/menu` | Главное меню |
-| `/help` | Помощь |
-| `/support`, `/privacy` | Контакт поддержки и политика конфиденциальности, в том числе до проверки регистрации |
+| `/help` | Помощь после одобрения доступа |
 | `/subscription` | Подписка и персональная ссылка |
 | `/ticket` | Обращение в поддержку |
 | `/health` | Состояние серверов в пределах доступного уровня |

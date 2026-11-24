@@ -19,8 +19,6 @@ _NAVIGATION_COMMANDS = frozenset(
         "start",
         "menu",
         "help",
-        "support",
-        "privacy",
         "auth",
         "login",
         "logout",

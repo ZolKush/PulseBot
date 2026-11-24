@@ -16,6 +16,7 @@ from ..bot.guards import (
     is_private,
     reply_disabled,
     reply_need_auth,
+    require_auth,
     require_private,
 )
 from ..bot.help import render_help_message
@@ -81,12 +82,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 @require_private
+@require_auth
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    meta = get_user_meta(get_user_id(update) or 0)
-    if meta and meta.get("access_state") == "blocked":
-        await reply_disabled(update)
-        return
-
     text = render_help_message(product_settings_snapshot())
     query = update.callback_query
     message = update.effective_message

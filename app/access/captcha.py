@@ -5,15 +5,13 @@ from __future__ import annotations
 from urllib.parse import urlencode
 
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
-from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from ..bot.conversations import navigation_command
 from ..bot.guards import is_private, require_private
-from ..bot.help import render_support_contact
 from ..config import CAPTCHA_URL, logger
-from ..storage import captcha_allowed, captcha_session, product_settings_snapshot
+from ..storage import captcha_allowed, captcha_session
 from .commands import delete_sensitive_auth_message
 from .views import request_access_markup
 
@@ -30,8 +28,7 @@ async def cmd_privacy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             "При включённой защите регистрации ZeroNet использует Cloudflare Turnstile. "
             "Мини-приложение передаёт боту данные, подписанные Telegram, чтобы связать проверку с вашей учётной записью. "
             "Cloudflare обрабатывает данные браузера для защиты от ботов. После успешной проверки бот "
-            "сохраняет ваш Telegram ID и время проверки. "
-            "Связаться с администрацией по вопросам обработки данных можно через /support.",
+            "сохраняет ваш Telegram ID и время проверки.",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("Стандартная политика Telegram", url=_PRIVACY_URL)]]
             ),
@@ -55,23 +52,13 @@ async def _reply_before_registration(update: Update, context: ContextTypes.DEFAU
     message = update.effective_message
     if not is_private(update) or not message:
         return
-    if command == "privacy" or (query and query.data == "menu:privacy"):
+    if query and query.data == "menu:privacy":
         await cmd_privacy(update, context)
         return
     if query:
         await query.answer()
-    if command in {"help", "support", "ticket"} or (query and query.data in ("menu:help", "menu:ticket")):
-        contact = render_support_contact(product_settings_snapshot())
-        await message.reply_text(
-            "<b>Помощь с регистрацией</b>\n\n"
-            "Откройте проверку из личного чата с ботом. Если виджет не загрузился, "
-            "попробуйте другую сеть и снова отправьте /start."
-            + (contact or "\n\nАдминистрация пока не указала контактную почту для обращений."),
-            parse_mode=ParseMode.HTML,
-        )
-        return
     if command != "start":
-        await message.reply_text("Для регистрации отправьте /start. Поддержка — /support, политика — /privacy.")
+        await message.reply_text("Для регистрации отправьте /start.")
         return
 
     session = await captcha_session(user_id)
@@ -82,7 +69,6 @@ async def _reply_before_registration(update: Update, context: ContextTypes.DEFAU
         reply_markup=InlineKeyboardMarkup(
             [
                 [InlineKeyboardButton("Пройти проверку", web_app=WebAppInfo(url=url))],
-                [InlineKeyboardButton("Поддержка", callback_data="menu:help")],
                 [InlineKeyboardButton("Политика конфиденциальности", callback_data="menu:privacy")],
             ]
         ),

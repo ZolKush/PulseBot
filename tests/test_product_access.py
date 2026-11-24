@@ -23,6 +23,28 @@ from app.users.views import user_card_kb
 from tests.product_support import _admin, _callback_names, _callback_update, _user
 
 
+@pytest.mark.parametrize("state", [None, "pending", "rejected", "logged_out", "blocked"])
+@pytest.mark.asyncio
+async def test_help_requires_approved_access(state: str | None, isolated_storage: None) -> None:
+    await storage.update_user_data(lambda data: data.product_settings.update(support_email="team@example.org"))
+    if state is not None:
+        await storage.upsert_user_meta(42, _user(42, access_state=state, enabled=False))
+    update, context = _callback_update(42, "menu:help")
+    await access_commands.cmd_help(update, context)
+    reply = update.effective_message.reply_text.await_args.args[0]
+    assert "team@example.org" not in reply
+    update.callback_query.edit_message_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_help_remains_available_after_approval(isolated_storage: None) -> None:
+    await storage.upsert_user_meta(42, _user(42))
+    await storage.update_user_data(lambda data: data.product_settings.update(support_email="team@example.org"))
+    update, context = _callback_update(42, "menu:help")
+    await access_commands.cmd_help(update, context)
+    assert "team@example.org" in update.callback_query.edit_message_text.await_args.args[0]
+
+
 def test_staff_signature_is_title_or_title_plus_alias() -> None:
     support = _admin(
         1,
