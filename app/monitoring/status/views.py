@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from itertools import groupby
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from ...bot.ui import btn_back, btn_home, clip_text, pager_row
 from ...config import TZ
 from ..zabbix import Host, Metric, Problem
-from .metrics import metric_pages, metric_sections, metric_summary
+from .metrics import METRIC_CATEGORY_LABELS, metric_categories, metric_pages, metric_sections, metric_summary
 
 Screen = tuple[str, InlineKeyboardMarkup]
 HEALTHY = "✅ Все системы работают штатно, проблем не замечено."
@@ -65,6 +64,29 @@ def _host_title(host: Host) -> str:
     return f"{flag} {name}" if flag else name
 
 
+def _metric_buttons(host: Host, metrics: tuple[Metric, ...]) -> list[list[InlineKeyboardButton]]:
+    buttons = [
+        InlineKeyboardButton(label, callback_data=f"status:metrics:{host.id}:{category}:0")
+        for category, label in metric_categories(metrics)
+    ]
+    return [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
+
+
+def _latest_measurement(metrics: tuple[Metric, ...]) -> str:
+    timestamps = {
+        metric.lastclock
+        for metric in metrics
+        if metric.supported and metric.value is not None and metric.value.strip() and metric.lastclock > 0
+    }
+    for timestamp in sorted(timestamps, reverse=True):
+        try:
+            stamp = datetime.fromtimestamp(timestamp, TZ)
+        except (OSError, OverflowError, ValueError):
+            continue
+        return f"🕒 Последние данные Zabbix · {stamp:%d.%m.%Y %H:%M:%S %Z}"
+    return "🕒 Последние данные Zabbix · время неизвестно"
+
+
 def host_list(hosts: tuple[Host, ...], problems: tuple[Problem, ...], requested: int) -> Screen:
     page, total, portion = _page(len(hosts), HOSTS_PER_PAGE, requested)
     visible = hosts[portion]
@@ -95,7 +117,7 @@ def host_list(hosts: tuple[Host, ...], problems: tuple[Problem, ...], requested:
 
 def host_card(host: Host, metrics: tuple[Metric, ...], problems: tuple[Problem, ...], list_page: int) -> Screen:
     active = sorted((p for p in problems if not p.suppressed), key=lambda p: (-p.severity, -int(p.event_id)))
-    sections = [_host_title(host), metric_summary(metrics)]
+    sections = [_host_title(host)]
     if active:
         lead = active[0]
         issue = f"{_SEVERITY_MARKS[lead.severity]} {_STAFF_SEVERITIES[lead.severity]} · {_label(lead.name, 200)}"
@@ -108,11 +130,11 @@ def host_card(host: Host, metrics: tuple[Metric, ...], problems: tuple[Problem, 
         sections.append("✅ Активных проблем нет")
     if suppressed_count := sum(p.suppressed for p in problems):
         sections.append(f"🔕 Подавленных проблем: {suppressed_count}")
-    sections.append(f"Сводка обновлена в {datetime.now(TZ):%H:%M %Z}")
+    sections.extend([metric_summary(metrics), _latest_measurement(metrics)])
     keyboard = InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("📊 Подробные метрики", callback_data=f"status:metrics:{host.id}:0")],
             [InlineKeyboardButton("⚠️ Проблемы сервера", callback_data=f"status:hostissues:{host.id}:0")],
+            *_metric_buttons(host, metrics),
             [
                 InlineKeyboardButton("🔄 Обновить", callback_data=f"status:host:{host.id}"),
                 btn_back(f"status:hosts:{list_page}", "⬅️ К серверам"),
@@ -126,12 +148,23 @@ def _acknowledgement(issue: Problem) -> str:
     return "👁 Подтверждена" if issue.acknowledged else "⏳ Ожидает подтверждения"
 
 
-def _public_issue(issue: Problem) -> str:
+def _public_problems(hosts: tuple[Host, ...], problems: tuple[Problem, ...]) -> tuple[Problem, ...]:
+    highest: dict[str, Problem] = {}
+    for issue in problems:
+        current = highest.get(issue.host_id)
+        if current is None or (issue.severity, int(issue.event_id)) > (current.severity, int(current.event_id)):
+            highest[issue.host_id] = issue
+    in_inventory_order = (highest[host.id] for host in hosts if host.id in highest)
+    return tuple(sorted(in_inventory_order, key=lambda issue: -issue.severity))
+
+
+def _public_issue(issue: Problem, host_name: str) -> str:
     severity, impact = _PUBLIC_SEVERITIES[issue.severity]
     status = _acknowledgement(issue)
     if issue.cause_eventid != "0":
         status += " · 🔗 Связана с другой проблемой."
-    return f"{_SEVERITY_MARKS[issue.severity]} {severity}\n{impact}\n{status}"
+    host_name = host_name.replace("\n", " ")
+    return f"{_SEVERITY_MARKS[issue.severity]} {host_name} · {severity}\n{impact}\n{status}"
 
 
 def _staff_issue(issue: Problem, location: str) -> str:
@@ -139,11 +172,15 @@ def _staff_issue(issue: Problem, location: str) -> str:
     status = _acknowledgement(issue)
     if issue.suppressed:
         status = f"🔕 Подавлена · {status}"
-    lines = [f"{severity} · {_label(issue.name, 220)}", location, status]
+    lines = [f"{severity} · {_label(issue.name, 220)}", location]
+    if issue.source_host_name:
+        lines.append(f"Источник проверки · {_label(issue.source_host_name, 80)}")
+    lines.append(status)
     if issue.cause_eventid != "0":
         lines.append(f"🔗 Симптом проблемы #{issue.cause_eventid}")
     if issue.comment:
-        lines.append(f"💬 Комментарий: {_label(issue.comment, 220)}")
+        comment_limit = 180 if issue.source_host_name else 220
+        lines.append(f"💬 Комментарий: {_label(issue.comment, comment_limit)}")
     return "\n".join(lines)
 
 
@@ -151,6 +188,8 @@ def problem_list(
     hosts: tuple[Host, ...], problems: tuple[Problem, ...], requested: int, *, staff: bool, host: Host | None = None
 ) -> Screen:
     names = {node.id: _host_title(node) for node in hosts}
+    if not staff:
+        problems = _public_problems(hosts, problems)
     page, total, portion = _page(len(problems), 5, requested)
     if staff:
         title = f"⚠️ Проблемы · {_host_title(host)}" if host else "⚠️ Открытые проблемы"
@@ -164,11 +203,8 @@ def problem_list(
         else:
             blocks = [title, "✅ Открытых проблем нет."]
     elif problems:
-        affected = len({issue.host_id for issue in problems})
-        blocks = [f"🖥 Статус серверов\nСерверов с проблемами: {affected}"]
-        for host_id, issues in groupby(problems[portion], key=lambda issue: issue.host_id):
-            details = "\n\n".join(_public_issue(issue) for issue in issues)
-            blocks.append(f"📍 {names[host_id]}\n{details}")
+        blocks = [f"🖥 Статус серверов\nСерверов с проблемами: {len(problems)}"]
+        blocks.extend(_public_issue(issue, names[issue.host_id]) for issue in problems[portion])
     else:
         blocks = [HEALTHY]
 
@@ -182,14 +218,23 @@ def problem_list(
     return "\n\n".join(blocks), InlineKeyboardMarkup(rows)
 
 
-def metric_list(host: Host, metrics: tuple[Metric, ...], requested: int) -> Screen:
-    pages = metric_pages(metrics)
-    page, total, _ = _page(len(pages), 1, requested)
-    blocks = [f"📊 Подробные метрики · {_host_title(host)}"]
-    blocks.extend(metric_sections(pages[page]))
-    if not metrics:
-        blocks.append("Для этого узла в Zabbix нет доступных метрик из списка мониторинга.")
-    rows = _navigation(f"status:metrics:{host.id}:", page, total)
+def metric_list(host: Host, metrics: tuple[Metric, ...], requested: int, *, category: str = "") -> Screen:
+    prefix = f"status:metrics:{host.id}:"
+    title = METRIC_CATEGORY_LABELS[category] if category else "📊 Подробные метрики"
+    blocks = [f"{title} · {_host_title(host)}"]
+    if category:
+        pages = metric_pages(metrics, category)
+        page, total, _ = _page(len(pages), 1, requested)
+        if pages[page]:
+            blocks.extend(metric_sections(pages[page]))
+        else:
+            blocks.append("Для этого узла нет метрик в этой категории.")
+        rows = _navigation(f"{prefix}{category}:", page, total)
+    else:
+        rows = _metric_buttons(host, metrics)
+        if not rows:
+            blocks.append("Для этого узла в Zabbix нет доступных метрик из списка мониторинга.")
+        rows.extend(_navigation(prefix, 0, 1))
     rows.append([btn_back(f"status:host:{host.id}", "⬅️ К серверу"), btn_home()])
     return "\n\n".join(blocks), InlineKeyboardMarkup(rows)
 

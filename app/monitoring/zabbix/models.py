@@ -25,6 +25,7 @@ class Problem:
     cause_eventid: str = "0"
     name: str = ""
     comment: str = ""
+    source_host_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -35,3 +36,4 @@ class Metric:
     value: str | None
     lastclock: int
     supported: bool = True
+    resolved_name: str = ""

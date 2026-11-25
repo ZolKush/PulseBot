@@ -65,6 +65,7 @@ DEFAULT_ROUTES = (
     r"callback:^status:issues:[0-9]{1,9}$",
     r"callback:^status:host:[0-9]{1,20}$",
     r"callback:^status:(?:metrics|hostissues):[0-9]{1,20}:[0-9]{1,9}$",
+    r"callback:^status:metrics:[0-9]{1,20}:(?:load|disk|network|docker|remnawave|web):[0-9]{1,9}$",
     "callback:*",
     "message",
 )
@@ -76,6 +77,7 @@ NON_BLOCKING_ROUTES = (
     r"callback:^status:issues:[0-9]{1,9}$",
     r"callback:^status:host:[0-9]{1,20}$",
     r"callback:^status:(?:metrics|hostissues):[0-9]{1,20}:[0-9]{1,9}$",
+    r"callback:^status:metrics:[0-9]{1,20}:(?:load|disk|network|docker|remnawave|web):[0-9]{1,9}$",
 )
 
 DEFAULT_JOB_NAMES = (

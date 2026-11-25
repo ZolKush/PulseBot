@@ -11,5 +11,6 @@ def register_monitoring_routes(application: Application) -> None:
         (status_issues_cb, r"^status:issues:[0-9]{1,9}$"),
         (status_host_cb, r"^status:host:[0-9]{1,20}$"),
         (status_host_page_cb, r"^status:(?:metrics|hostissues):[0-9]{1,20}:[0-9]{1,9}$"),
+        (status_host_page_cb, r"^status:metrics:[0-9]{1,20}:(?:load|disk|network|docker|remnawave|web):[0-9]{1,9}$"),
     ):
         application.add_handler(CallbackQueryHandler(callback, pattern=pattern, block=False))

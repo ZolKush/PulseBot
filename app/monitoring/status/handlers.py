@@ -21,7 +21,7 @@ from ...bot.guards import (
 )
 from ...config import ZABBIX_API_TOKEN, ZABBIX_API_URL, logger
 from ...messaging.message_cleanup import record_navigation_result
-from ..zabbix import ZabbixClient, ZabbixError
+from ..zabbix import Host, Problem, ZabbixClient, ZabbixError
 from .views import HOSTS_PER_PAGE, UNAVAILABLE, Screen, host_card, host_list, metric_list, notice, problem_list
 
 
@@ -35,7 +35,14 @@ class _PanelEdits:
 _panels: WeakValueDictionary[tuple[int, int], _PanelEdits] = WeakValueDictionary()
 
 
-async def _load_screen(client: ZabbixClient, view: str, page: int, host_id: str, staff: bool) -> Screen:
+async def _problems_for_host(client: ZabbixClient, hosts: tuple[Host, ...], host_id: str) -> tuple[Problem, ...]:
+    problems = await client.problems(hosts, staff=True)
+    return tuple(issue for issue in problems if issue.host_id == host_id)
+
+
+async def _load_screen(
+    client: ZabbixClient, view: str, page: int, host_id: str, staff: bool, *, category: str = ""
+) -> Screen:
     hosts = await client.hosts()
     if not hosts:
         return notice(UNAVAILABLE, "menu:status")
@@ -49,14 +56,14 @@ async def _load_screen(client: ZabbixClient, view: str, page: int, host_id: str,
         return notice("Этот узел больше недоступен. Обновите список узлов.", "status:hosts:0")
     host = hosts[index]
     if view == "metrics":
-        return metric_list(host, await client.metrics(host.id), page)
+        return metric_list(host, await client.metrics(host.id), page, category=category)
     if view == "hostissues":
-        return problem_list((host,), await client.problems((host,), staff=True), page, staff=True, host=host)
-    metrics, problems = await asyncio.gather(client.metrics(host.id), client.problems((host,), staff=True))
+        return problem_list((host,), await _problems_for_host(client, hosts, host.id), page, staff=True, host=host)
+    metrics, problems = await asyncio.gather(client.metrics(host.id), _problems_for_host(client, hosts, host.id))
     return host_card(host, metrics, problems, index // HOSTS_PER_PAGE)
 
 
-async def _show(update: Update, *, view: str, page: int = 0, host_id: str = "") -> None:
+async def _show(update: Update, *, view: str, page: int = 0, host_id: str = "", category: str = "") -> None:
     query = update.callback_query
     message = update.effective_message
     if message is None:
@@ -73,7 +80,7 @@ async def _show(update: Update, *, view: str, page: int = 0, host_id: str = "") 
     screen: Screen
     try:
         client = ZabbixClient(ZABBIX_API_URL, ZABBIX_API_TOKEN)
-        screen = await _load_screen(client, view, page, host_id, staff)
+        screen = await _load_screen(client, view, page, host_id, staff, category=category)
     except ZabbixError as error:
         logger.warning("Zabbix status request failed: %s", error, extra={"action": "zabbix_status_failed"})
         retry = str(query.data) if query and query.data else "menu:status"
@@ -129,5 +136,6 @@ async def status_host_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def status_host_page_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if query and isinstance(query.data, str):
-        _, view, host_id, page = query.data.split(":")
-        await _show(update, view=view, host_id=host_id, page=int(page))
+        _, view, host_id, target = query.data.split(":", 3)
+        category, _, page = target.rpartition(":")
+        await _show(update, view=view, host_id=host_id, page=int(page), category=category)

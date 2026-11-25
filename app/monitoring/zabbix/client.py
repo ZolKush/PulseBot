@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 
+from .attribution import remnawave_hosts, remnawave_target
 from .metric_keys import METRIC_PATTERNS, metric_family
 from .models import Host, HostOrigin, Metric, Problem
 
@@ -65,8 +66,8 @@ def _monitored_trigger_hosts(trigger: dict, host_ids: set[str]) -> set[str]:
         raise ZabbixError("Incomplete Zabbix trigger relations")
     if any(_flag(item, "status") for item in items) or any(_flag(host, "status") for host in hosts):
         return set()
-    members = {_id(host, "hostid") for host in hosts} & host_ids
-    if not members:
+    members = {_id(host, "hostid") for host in hosts}
+    if not members & host_ids:
         raise ZabbixError("Cannot associate active Zabbix problem with a host")
     return members
 
@@ -165,17 +166,25 @@ class ZabbixClient:
     async def problems(self, hosts: Sequence[Host], *, staff: bool = False) -> tuple[Problem, ...]:
         if not hosts:
             raise ZabbixError("No monitored hosts visible in Zabbix")
-        host_ids = {host.id for host in hosts}
-        fields = ["eventid", "objectid", "severity", "acknowledged", "suppressed", "cause_eventid", "r_eventid"]
+        host_names = {host.id: host.name for host in hosts}
+        host_ids = set(host_names)
         params: dict[str, Any] = {
-            "output": fields,
+            "output": [
+                "eventid",
+                "objectid",
+                "severity",
+                "acknowledged",
+                "suppressed",
+                "cause_eventid",
+                "r_eventid",
+                "name",
+            ],
             "hostids": sorted(host_ids),
             "source": 0,
             "object": 0,
             "recent": False,
         }
         if staff:
-            fields.append("name")
             params["selectAcknowledges"] = ["message"]
         else:
             params.update(severities=[2, 3, 4, 5], suppressed=False)
@@ -196,6 +205,7 @@ class ZabbixClient:
         affected = {_id(trigger, "triggerid"): _monitored_trigger_hosts(trigger, host_ids) for trigger in triggers}
         if affected.keys() != set(trigger_ids):
             raise ZabbixError("Incomplete Zabbix trigger data")
+        hosts_by_name = remnawave_hosts(hosts)
         problems = []
         for row in rows:
             severity = _number(row, "severity")
@@ -205,9 +215,18 @@ class ZabbixClient:
             cause = _number(row, "cause_eventid", nullable=True)
             if _number(row, "r_eventid", nullable=True) or (not staff and (severity < 2 or suppressed)):
                 continue
-            members = affected[_id(row, "objectid")]
+            source_hosts = affected[_id(row, "objectid")]
+            members = source_hosts & host_ids
             if not members:
                 continue
+            event_name = _text(row, "name") if staff else row.get("name", "")
+            source_host_name = ""
+            # A node disconnect can be collected by the panel's own trigger.
+            if len(source_hosts) == 1 and isinstance(event_name, str):
+                target = remnawave_target(event_name, hosts_by_name)
+                if target and target not in members:
+                    source_host_name = host_names[next(iter(members))]
+                    members = {target}
             comment = ""
             if staff:
                 messages = (_text(update, "message").strip() for update in _rows(row.get("acknowledges")))
@@ -221,8 +240,9 @@ class ZabbixClient:
                         _flag(row, "acknowledged"),
                         suppressed,
                         str(cause),
-                        _text(row, "name") if staff else "",
+                        event_name if staff else "",
                         comment,
+                        source_host_name=source_host_name if staff else "",
                     )
                 )
         return tuple(sorted(problems, key=lambda p: (p.host_id, -p.severity, -int(p.event_id))))
@@ -231,7 +251,7 @@ class ZabbixClient:
         rows = await self._request(
             "item.get",
             {
-                "output": ["key_", "name", "units", "lastvalue", "lastclock", "state"],
+                "output": ["key_", "name", "name_resolved", "units", "lastvalue", "lastclock", "state"],
                 "hostids": [host_id],
                 "monitored": True,
                 "webitems": True,
@@ -247,5 +267,16 @@ class ZabbixClient:
                 lastclock = _number(row, "lastclock")
                 supported = not _flag(row, "state")
                 value = _text(row, "lastvalue") if lastclock and supported else None
-                metrics.append(Metric(key, _text(row, "name"), _text(row, "units"), value, lastclock, supported))
+                resolved_name = row.get("name_resolved")
+                metrics.append(
+                    Metric(
+                        key,
+                        _text(row, "name"),
+                        _text(row, "units"),
+                        value,
+                        lastclock,
+                        supported,
+                        resolved_name=resolved_name if isinstance(resolved_name, str) else "",
+                    )
+                )
         return tuple(sorted(metrics, key=lambda metric: metric.key))
