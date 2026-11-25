@@ -4,25 +4,27 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from itertools import groupby
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from ...bot.ui import btn_back, btn_home, clip_text, pager_row
 from ...config import TZ
 from ..zabbix import Host, Metric, Problem
-from .metrics import metric_detail, metric_summary
+from .metrics import metric_pages, metric_sections, metric_summary
 
 Screen = tuple[str, InlineKeyboardMarkup]
-HEALTHY = "Все системы работают штатно, проблем не замечено."
-UNAVAILABLE = "Сейчас не удалось получить состояние серверов. Попробуйте обновить статус позже."
+HEALTHY = "✅ Все системы работают штатно, проблем не замечено."
+UNAVAILABLE = "❔ Сейчас не удалось получить состояние серверов. Попробуйте обновить статус позже."
 
 _PUBLIC_SEVERITIES = {
-    2: "Предупреждение. В работе сервера замечено отклонение.",
-    3: "Средняя важность. Отдельные функции могут работать с перебоями.",
-    4: "Высокая важность. Возможны существенные перебои в работе сервера.",
-    5: "Критическая проблема. Сервис может быть недоступен.",
+    2: ("Предупреждение", "В работе сервера замечено отклонение."),
+    3: ("Средняя важность", "Отдельные функции могут работать с перебоями."),
+    4: ("Высокая важность", "Возможны существенные перебои в работе сервера."),
+    5: ("Критическая проблема", "Сервис может быть недоступен."),
 }
 _STAFF_SEVERITIES = ("Не классифицирована", "Информация", "Предупреждение", "Средняя", "Высокая", "Чрезвычайная")
+_SEVERITY_MARKS = ("⚪", "ℹ️", "🟡", "🟠", "🔴", "🚨")
 
 
 def _label(value: str, budget: int) -> str:
@@ -37,7 +39,7 @@ def _page(length: int, size: int, requested: int) -> tuple[int, int, slice]:
 
 def _navigation(prefix: str, page: int, total: int) -> list[list[InlineKeyboardButton]]:
     rows = [pager_row(prefix, page, total)] if total > 1 else []
-    rows.append([InlineKeyboardButton("Обновить", callback_data=f"{prefix}{page}")])
+    rows.append([InlineKeyboardButton("🔄 Обновить", callback_data=f"{prefix}{page}")])
     return rows
 
 
@@ -96,7 +98,7 @@ def host_card(host: Host, metrics: tuple[Metric, ...], problems: tuple[Problem, 
     sections = [_host_title(host), metric_summary(metrics)]
     if active:
         lead = active[0]
-        issue = f"⚠️ {_STAFF_SEVERITIES[lead.severity]} · {_label(lead.name, 200)}"
+        issue = f"{_SEVERITY_MARKS[lead.severity]} {_STAFF_SEVERITIES[lead.severity]} · {_label(lead.name, 200)}"
         if lead.acknowledged:
             issue += " · подтверждена"
         if len(active) > 1:
@@ -120,32 +122,56 @@ def host_card(host: Host, metrics: tuple[Metric, ...], problems: tuple[Problem, 
     return "\n\n".join(sections), keyboard
 
 
+def _acknowledgement(issue: Problem) -> str:
+    return "👁 Подтверждена" if issue.acknowledged else "⏳ Ожидает подтверждения"
+
+
+def _public_issue(issue: Problem) -> str:
+    severity, impact = _PUBLIC_SEVERITIES[issue.severity]
+    status = _acknowledgement(issue)
+    if issue.cause_eventid != "0":
+        status += " · 🔗 Связана с другой проблемой."
+    return f"{_SEVERITY_MARKS[issue.severity]} {severity}\n{impact}\n{status}"
+
+
+def _staff_issue(issue: Problem, location: str) -> str:
+    severity = f"{_SEVERITY_MARKS[issue.severity]} {_STAFF_SEVERITIES[issue.severity]}"
+    status = _acknowledgement(issue)
+    if issue.suppressed:
+        status = f"🔕 Подавлена · {status}"
+    lines = [f"{severity} · {_label(issue.name, 220)}", location, status]
+    if issue.cause_eventid != "0":
+        lines.append(f"🔗 Симптом проблемы #{issue.cause_eventid}")
+    if issue.comment:
+        lines.append(f"💬 Комментарий: {_label(issue.comment, 220)}")
+    return "\n".join(lines)
+
+
 def problem_list(
     hosts: tuple[Host, ...], problems: tuple[Problem, ...], requested: int, *, staff: bool, host: Host | None = None
 ) -> Screen:
-    names = {host.id: host.name for host in hosts}
+    names = {node.id: _host_title(node) for node in hosts}
     page, total, portion = _page(len(problems), 5, requested)
-    blocks: list[str] = []
-    for issue in problems[portion]:
-        name = _label(names[issue.host_id], 128)
-        status = "Подтверждена" if issue.acknowledged else "Ожидает подтверждения"
-        if staff:
-            lines = [
-                f"{name} · #{issue.event_id}",
-                f"{_STAFF_SEVERITIES[issue.severity]} · {_label(issue.name, 220)}",
-                status,
-            ]
-            if issue.suppressed:
-                lines.append("Подавлена")
-            if issue.cause_eventid != "0":
-                lines.append(f"Симптом проблемы #{issue.cause_eventid}")
-            if issue.comment:
-                lines.append(f"Комментарий: {_label(issue.comment, 220)}")
+    if staff:
+        title = f"⚠️ Проблемы · {_host_title(host)}" if host else "⚠️ Открытые проблемы"
+        if problems:
+            active = {issue.event_id for issue in problems if not issue.suppressed}
+            suppressed = {issue.event_id for issue in problems if issue.suppressed}
+            blocks = [f"{title}\nАктивных: {len(active)} · 🔕 Подавленных: {len(suppressed)}"]
+            for issue in problems[portion]:
+                location = f"#{issue.event_id}" if host else f"📍 {names[issue.host_id]} · #{issue.event_id}"
+                blocks.append(_staff_issue(issue, location))
         else:
-            lines = [name, _PUBLIC_SEVERITIES[issue.severity], f"Статус: {status.lower()}."]
-            if issue.cause_eventid != "0":
-                lines.append("Связана с другой проблемой.")
-        blocks.append("\n".join(lines))
+            blocks = [title, "✅ Открытых проблем нет."]
+    elif problems:
+        affected = len({issue.host_id for issue in problems})
+        blocks = [f"🖥 Статус серверов\nСерверов с проблемами: {affected}"]
+        for host_id, issues in groupby(problems[portion], key=lambda issue: issue.host_id):
+            details = "\n\n".join(_public_issue(issue) for issue in issues)
+            blocks.append(f"📍 {names[host_id]}\n{details}")
+    else:
+        blocks = [HEALTHY]
+
     prefix = f"status:hostissues:{host.id}:" if host else "status:issues:"
     rows = _navigation(prefix, page, total)
     if host:
@@ -153,16 +179,14 @@ def problem_list(
     elif staff:
         rows.append([btn_back("status:hosts:0", "К списку узлов")])
     rows.append([btn_home()])
-    text = "\n\n".join(blocks) if blocks else ("В Zabbix нет открытых проблем." if staff else HEALTHY)
-    if host:
-        text = f"⚠️ Проблемы · {_host_title(host)}\n\n" + ("\n\n".join(blocks) or "Открытых проблем нет.")
-    return text, InlineKeyboardMarkup(rows)
+    return "\n\n".join(blocks), InlineKeyboardMarkup(rows)
 
 
 def metric_list(host: Host, metrics: tuple[Metric, ...], requested: int) -> Screen:
-    page, total, portion = _page(len(metrics), 5, requested)
+    pages = metric_pages(metrics)
+    page, total, _ = _page(len(pages), 1, requested)
     blocks = [f"📊 Подробные метрики · {_host_title(host)}"]
-    blocks.extend(metric_detail(metric) for metric in metrics[portion])
+    blocks.extend(metric_sections(pages[page]))
     if not metrics:
         blocks.append("Для этого узла в Zabbix нет доступных метрик из списка мониторинга.")
     rows = _navigation(f"status:metrics:{host.id}:", page, total)
@@ -171,4 +195,4 @@ def metric_list(host: Host, metrics: tuple[Metric, ...], requested: int) -> Scre
 
 
 def notice(text: str, retry: str) -> Screen:
-    return text, InlineKeyboardMarkup([[InlineKeyboardButton("Обновить", callback_data=retry)], [btn_home()]])
+    return text, InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Обновить", callback_data=retry)], [btn_home()]])

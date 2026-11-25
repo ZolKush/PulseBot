@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from app import storage
+from app.bot.text_limits import utf16_length
 from app.monitoring.status import handlers, views
 from app.monitoring.zabbix import Host, Metric, Problem, ZabbixError
 from tests.product_support import _admin, _callback_names, _user
@@ -55,13 +56,65 @@ async def test_subscriber_refreshes_public_status_through_resolution(isolated_st
         text = call.args[0]
         if expected == views.HEALTHY:
             assert text == expected
+            assert text.startswith("✅") and "\n" not in text
         else:
-            assert expected in text and HOST.name in text and "подтверждена" in text
+            assert text.startswith("🖥 Статус серверов")
+            assert all(value in text for value in ("Серверов с проблемами: 1", f"📍 {HOST.name}", f"🔴 {expected}"))
+            assert "👁 Подтверждена · 🔗 Связана с другой проблемой." in text
             assert "Private" not in text and issue.event_id not in text
-            assert "Связана с другой проблемой." in text and issue.cause_eventid not in text
+            assert issue.cause_eventid not in text
         assert _callback_names(call.kwargs["reply_markup"]) == {"status:issues:0", "menu:home"}
     api.problems.assert_awaited_with((HOST,), staff=False)
     api.metrics.assert_not_awaited()
+
+
+def test_subscriber_problem_pages_repeat_host_heading_and_show_severity_and_acknowledgement():
+    other = Host("43", "Узел 2")
+    issues = tuple(Problem(HOST.id, str(10 + i), severity, False) for i, severity in enumerate((5, 4, 3, 2, 2, 2)))
+    issues += (Problem(other.id, issues[-1].event_id, 2, False),)
+
+    first, markup = views.problem_list((HOST, other), issues, 0, staff=False)
+    assert first.count(f"📍 {HOST.name}") == 1 and other.name not in first
+    assert "Серверов с проблемами: 2" in first
+    assert all(label in first for label in ("🚨 Критическая", "🔴 Высокая", "🟠 Средняя", "🟡 Предупреждение"))
+    assert first.count("⏳ Ожидает подтверждения") == 5
+    assert "status:issues:1" in _callback_names(markup)
+
+    last, markup = views.problem_list((HOST, other), issues, 1, staff=False)
+    assert last.count("🟡 Предупреждение") == 2
+    assert f"📍 {HOST.name}" in last and f"📍 {other.name}" in last
+    assert {"status:issues:0", "status:issues:1", "menu:home"} == _callback_names(markup)
+
+
+def test_staff_problem_page_distinguishes_unique_active_and_suppressed_events_within_telegram_limit():
+    long_text = "🛠" * 300
+    hosts = (Host("42", f"Первый {long_text}"), Host("43", f"Второй {long_text}"))
+    issues = tuple(
+        Problem(
+            host_id,
+            event_id,
+            5,
+            True,
+            suppressed=suppressed,
+            cause_eventid="12345678901234567890",
+            name=f"Триггер {long_text}",
+            comment=f"Заметка {long_text}",
+        )
+        for host_id, event_id, suppressed in (
+            ("42", "12345678901234567891", False),
+            ("42", "12345678901234567892", False),
+            ("42", "12345678901234567893", True),
+            ("43", "12345678901234567891", False),
+            ("43", "12345678901234567893", True),
+        )
+    )
+    text, _ = views.problem_list(hosts, issues, 0, staff=True)
+    assert utf16_length(text) <= 4000
+    assert "Активных: 2 · 🔕 Подавленных: 1" in text
+    assert text.count("🚨 Чрезвычайная · Триггер") == 5
+    assert text.count("🔕 Подавлена · 👁 Подтверждена") == 2
+    assert text.count("🔗 Симптом проблемы #12345678901234567890") == 5
+    assert text.count("💬 Комментарий: Заметка") == 5
 
 
 @pytest.mark.asyncio
@@ -145,7 +198,9 @@ async def test_staff_host_card_links_to_scoped_details_and_original_overview_pag
     update.callback_query.data = "status:metrics:42:0"
     await handlers.status_host_page_cb(update, context)
     text, markup = rendered(update)
-    assert "system.cpu.util" in text and "17 %" in text and "2023" in text
+    assert all(
+        value in text for value in ("Использование ресурсов", "Загрузка процессора", "17 %", "system.cpu.util", "2023")
+    )
     assert {"status:metrics:42:0", "status:host:42"} <= _callback_names(markup)
     api.problems.assert_awaited_once()
 
@@ -250,14 +305,20 @@ async def test_public_status_withheld_after_subscriber_access_changes(isolated_s
 
 def test_metric_pages_keep_missing_and_zero_distinct_and_clamp_stale_pages():
     metrics = tuple(Metric(f"net.if.in[eth{i}]", "Сеть", "bps", "0", 1700000000) for i in range(5))
-    metrics += (Metric("docker.ping", "Docker", "", None, 0),)
+    metrics += (
+        Metric("docker.ping", "Docker", "", None, 0),
+        Metric("system.cpu.util", "CPU", "%", "0", 1700000000),
+    )
     first, markup = views.metric_list(HOST, metrics, 0)
-    assert "0 бит/с" in first
+    assert "0 %" in first and "0 бит/с" in first
+    assert first.index("Использование ресурсов") < first.index("Сеть")
     assert "status:metrics:42:1" in _callback_names(markup)
-    last, _ = views.metric_list(HOST, metrics, 999)
+    last, markup = views.metric_list(HOST, metrics, 999)
     assert "docker.ping" in last and "нет данных" in last
+    assert {"status:metrics:42:0", "status:metrics:42:1", "status:host:42", "menu:home"} == _callback_names(markup)
 
 
 def test_invalid_metric_timestamp_preserves_the_returned_value():
-    text, _ = views.metric_list(HOST, (Metric("docker.ping", "Docker", "", "1", 10**19),), 0)
-    assert "1 · время измерения неизвестно" in text
+    host = Host("42", "Сервер Docker")
+    text, _ = views.metric_list(host, (Metric("docker.ping", "Docker", "", "1", 10**19),), 0)
+    assert "1" in text and "время измерения неизвестно" in text
